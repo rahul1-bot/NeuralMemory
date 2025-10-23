@@ -115,6 +115,102 @@ class MemoryArgumentParser:
             help="Database path (default: ~/.mcp_memory/chroma_db)"
         )
 
+        # Session management commands
+        self._parser.add_argument(
+            "--start-session",
+            type=str,
+            nargs='?',
+            const='',
+            metavar="NAME",
+            help="Start a new conversation session with optional name"
+        )
+
+        self._parser.add_argument(
+            "--end-session",
+            action="store_true",
+            help="End the current session with optional summary"
+        )
+
+        self._parser.add_argument(
+            "--list-sessions",
+            action="store_true",
+            help="List all sessions with their metadata"
+        )
+
+        self._parser.add_argument(
+            "--get-session",
+            type=str,
+            metavar="NAME",
+            help="Get session details by name"
+        )
+
+        self._parser.add_argument(
+            "--session-stats",
+            type=str,
+            nargs='?',
+            const='',
+            metavar="SESSION_ID",
+            help="Get comprehensive statistics for a session"
+        )
+
+        self._parser.add_argument(
+            "--show-thread",
+            type=str,
+            metavar="MEMORY_ID",
+            help="Display full conversation thread for a memory"
+        )
+
+        self._parser.add_argument(
+            "--show-context",
+            type=str,
+            metavar="MEMORY_ID",
+            help="Display memory with surrounding context"
+        )
+
+        # Session parameters for store operations
+        self._parser.add_argument(
+            "--session",
+            type=str,
+            metavar="SESSION_ID",
+            help="Store memory to specific session (session ID or name)"
+        )
+
+        self._parser.add_argument(
+            "--project",
+            type=str,
+            metavar="PROJECT",
+            help="Project name for the session or memory"
+        )
+
+        self._parser.add_argument(
+            "--topic",
+            type=str,
+            metavar="TOPIC",
+            help="Topic for the session"
+        )
+
+        self._parser.add_argument(
+            "--participants",
+            type=str,
+            nargs='+',
+            metavar="NAME",
+            help="Participants in the session"
+        )
+
+        self._parser.add_argument(
+            "--summarize",
+            action="store_true",
+            help="Create summary when ending session"
+        )
+
+        self._parser.add_argument(
+            "--context-window",
+            type=int,
+            default=3,
+            metavar="N",
+            help="Number of memories before/after for context (default: 3)"
+        )
+
     def parse_arguments(self) -> Any:
         return self._parser.parse_args()
 

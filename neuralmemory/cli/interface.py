@@ -52,6 +52,15 @@ class MemoryCLI:
     
     def _is_delete_mode(self, args: Any) -> bool:
         return args.delete is not None
+
+    def _is_session_command(self, args: Any) -> bool:
+        return (hasattr(args, 'start_session') and args.start_session is not None) or \
+               (hasattr(args, 'end_session') and args.end_session) or \
+               (hasattr(args, 'list_sessions') and args.list_sessions) or \
+               (hasattr(args, 'get_session') and args.get_session is not None) or \
+               (hasattr(args, 'session_stats') and args.session_stats is not None) or \
+               (hasattr(args, 'show_thread') and args.show_thread is not None) or \
+               (hasattr(args, 'show_context') and args.show_context is not None)
     
     def _get_timestamp_value(self, args: Any) -> list[str] | None:
         if args.timestamp:
@@ -110,19 +119,32 @@ class MemoryCLI:
         except (VectorDatabaseError, EmbeddingEngineError, RerankerEngineError) as e:
             raise RuntimeError(f"Search execution failed: {e}")
     
-    def _execute_store(self, content: str, tags: str | None, timestamp: str | None) -> StorageResult:
+    def _execute_store(
+        self,
+        content: str,
+        tags: str | None,
+        timestamp: str | None,
+        session_id: str | None = None,
+        project: str | None = None,
+        auto_importance: bool = False,
+        auto_tags: bool = False
+    ) -> StorageResult:
         if self._neural_vector is None:
             raise RuntimeError("Neural Vector not initialized")
-        
+
         tag_list: list[str] = []
         if tags:
             tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
-        
+
         try:
             return self._neural_vector.store_memory(
                 content=content,
                 tags=tag_list,
-                timestamp=timestamp
+                timestamp=timestamp,
+                session_id=session_id,
+                project=project,
+                auto_importance=auto_importance,
+                auto_tags=auto_tags
             )
         except (VectorDatabaseError, EmbeddingEngineError) as e:
             raise RuntimeError(f"Store execution failed: {e}")
@@ -171,16 +193,114 @@ class MemoryCLI:
         else:
             print(self._formatter.format_batch_read_results(results))
         print(self._formatter.format_store_footer(execution_time))
-    
+
+    def _handle_start_session(self, args: Any) -> None:
+        """Handle --start-session command"""
+        name: str | None = args.start_session if args.start_session else None
+        project: str | None = args.project if hasattr(args, 'project') else None
+        topic: str | None = args.topic if hasattr(args, 'topic') else None
+        participants: list[str] | None = args.participants if hasattr(args, 'participants') else None
+
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        session_id: str = self._neural_vector.start_new_session(
+            name=name,
+            project=project,
+            topic=topic,
+            participants=participants
+        )
+
+        print(self._formatter.format_session_created(session_id, name))
+
+    def _handle_end_session(self, args: Any) -> None:
+        """Handle --end-session command"""
+        summarize: bool = args.summarize if hasattr(args, 'summarize') else True
+
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        summary: str | None = self._neural_vector.end_session(summarize=summarize)
+        print(self._formatter.format_session_ended(summary))
+
+    def _handle_list_sessions(self) -> None:
+        """Handle --list-sessions command"""
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        sessions: dict = self._neural_vector.list_sessions()
+        print(self._formatter.format_session_list(sessions))
+
+    def _handle_get_session(self, name: str) -> None:
+        """Handle --get-session command"""
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        session = self._neural_vector.get_session_by_name(name)
+        if session:
+            print(self._formatter.format_session_details(session))
+        else:
+            print(f"[INFO] No session found with name: {name}")
+
+    def _handle_session_stats(self, session_id: str | None) -> None:
+        """Handle --session-stats command"""
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        stats: dict = self._neural_vector.get_session_stats(session_id=session_id if session_id else None)
+        print(self._formatter.format_session_stats(stats))
+
+    def _handle_show_thread(self, memory_id: str) -> None:
+        """Handle --show-thread command"""
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        thread: list[MemoryResult] = self._neural_vector.get_conversation_thread(memory_id)
+        print(self._formatter.format_conversation_thread(thread))
+
+    def _handle_show_context(self, memory_id: str, context_window: int) -> None:
+        """Handle --show-context command"""
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        context: dict = self._neural_vector.get_memory_with_context(memory_id, context_window)
+        print(self._formatter.format_context_window(context))
+
     def run(self) -> None:
         try:
             args: Any = self._arg_parser.parse_arguments()
-            
+
             import time
             start_time: float = time.time()
-            
+
             self._initialize_neural_vector(args.db_path)
-            
+
+            # Handle session commands first
+            if hasattr(args, 'start_session') and args.start_session is not None:
+                self._handle_start_session(args)
+                return
+            elif hasattr(args, 'end_session') and args.end_session:
+                self._handle_end_session(args)
+                return
+            elif hasattr(args, 'list_sessions') and args.list_sessions:
+                self._handle_list_sessions()
+                return
+            elif hasattr(args, 'get_session') and args.get_session:
+                self._handle_get_session(args.get_session)
+                return
+            elif hasattr(args, 'session_stats') and args.session_stats is not None:
+                session_id = args.session_stats if args.session_stats else None
+                self._handle_session_stats(session_id)
+                return
+            elif hasattr(args, 'show_thread') and args.show_thread:
+                self._handle_show_thread(args.show_thread)
+                return
+            elif hasattr(args, 'show_context') and args.show_context:
+                context_window = args.context_window if hasattr(args, 'context_window') else 3
+                self._handle_show_context(args.show_context, context_window)
+                return
+
+            # Handle regular CRUD commands
             if self._is_read_mode(args):
                 identifiers: list[str] = args.read
                 
@@ -256,23 +376,31 @@ class MemoryCLI:
                     # Single memory storage
                     timestamp_values: list[str] | None = self._get_timestamp_value(args)
                     timestamp: str | None = timestamp_values[0] if timestamp_values else None
-                    
+
                     # CRITICAL: Timestamp validation
                     if not timestamp:
                         self._logger.warning("No timestamp provided for single memory - using current time")
                         print("[WARNING] No timestamp provided! Using current time. "
                               "Consider using --when for proper memory tracking.")
-                    
+
                     # Handle tags - could be a list or single string
                     tags_str: str | None = None
                     if args.tags:
                         tags_str = args.tags[0] if isinstance(args.tags, list) else args.tags
-                    
+
                     if not tags_str:
                         print("[WARNING] No tags provided! Tags help with memory retrieval.")
-                    
+
+                    # Get session parameters
+                    session_id: str | None = args.session if hasattr(args, 'session') else None
+                    project: str | None = args.project if hasattr(args, 'project') else None
+
                     result: StorageResult = self._execute_store(
-                        memories[0], tags_str, timestamp
+                        memories[0], tags_str, timestamp,
+                        session_id=session_id,
+                        project=project,
+                        auto_importance=False,
+                        auto_tags=False
                     )
                     execution_time: float = time.time() - start_time
                     self._display_store_result(result, execution_time)

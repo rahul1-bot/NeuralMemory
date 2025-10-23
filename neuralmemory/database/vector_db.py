@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import logging
 import re
 import time
@@ -15,6 +16,7 @@ from neuralmemory.core.exceptions import (
 )
 from neuralmemory.core.models import (
     EnhancedMemoryMetadata,
+    SessionMetadata,
     SearchResult,
     MemoryContent,
     StorageResult,
@@ -38,11 +40,17 @@ class NeuralVector:
         self._current_session_id: str | None = None
         self._session_sequence_num: int = 0
 
+        # Session metadata storage (Feature 2 & 3: Named Sessions + Session Metadata)
+        self._sessions_file: Path = self._db_path / "sessions.json"
+        self._sessions: dict[str, SessionMetadata] = {}
+        self._session_name_to_id: dict[str, str] = {}  # name -> session_id mapping
+
         log_path: Path = Path(__file__).parent / "logs" / "neuralvector.log"
         self._logger: logging.Logger = LoggerSetup.get_logger("NeuralVector", log_path)
         self._logger.info(f"Initializing NeuralVector with database path: {db_path}")
 
         self._initialize_components()
+        self._load_sessions()
     
     def _initialize_components(self) -> None:
         self._initialize_database()
@@ -64,7 +72,165 @@ class NeuralVector:
         
         self._embedding_engine = Qwen3EmbeddingEngine(embedding_config)
         self._reranker_engine = Qwen3RerankerEngine(reranker_config)
-    
+
+    # ==================== SESSION MANAGEMENT (Features 2 & 3) ====================
+
+    def _load_sessions(self) -> None:
+        """Load session metadata from JSON file."""
+        if self._sessions_file.exists():
+            try:
+                with open(self._sessions_file, 'r') as f:
+                    data: dict[str, Any] = json.load(f)
+                    for session_id, session_data in data.items():
+                        session_meta: SessionMetadata = SessionMetadata.from_dict(session_data)
+                        self._sessions[session_id] = session_meta
+                        if session_meta.name:
+                            self._session_name_to_id[session_meta.name] = session_id
+                self._logger.info(f"Loaded {len(self._sessions)} sessions from {self._sessions_file}")
+            except Exception as e:
+                self._logger.warning(f"Failed to load sessions: {e}")
+
+    def _save_sessions(self) -> None:
+        """Save session metadata to JSON file."""
+        try:
+            data: dict[str, Any] = {
+                session_id: session.to_dict()
+                for session_id, session in self._sessions.items()
+            }
+            self._sessions_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._sessions_file, 'w') as f:
+                json.dump(data, f, indent=2)
+            self._logger.debug(f"Saved {len(self._sessions)} sessions to {self._sessions_file}")
+        except Exception as e:
+            self._logger.error(f"Failed to save sessions: {e}")
+
+    def start_new_session(
+        self,
+        name: str | None = None,
+        project: str | None = None,
+        topic: str | None = None,
+        participants: list[str] | None = None
+    ) -> str:
+        """Start a new conversation session with optional name and metadata."""
+        import uuid
+
+        # Validate and handle session name
+        if name:
+            # Validate name format
+            if not re.match(r'^[a-zA-Z0-9_-]+$', name):
+                raise MemoryValidationError(
+                    f"Invalid session name '{name}': only alphanumeric, dash, and underscore allowed"
+                )
+            # Check uniqueness
+            if name in self._session_name_to_id:
+                raise MemoryValidationError(f"Session name '{name}' already exists")
+
+        session_id: str = str(uuid.uuid4())
+        self._current_session_id = session_id
+        self._session_sequence_num = 0
+
+        # Create session metadata
+        session_meta: SessionMetadata = SessionMetadata(
+            session_id=session_id,
+            name=name,
+            project=project,
+            topic=topic,
+            participants=participants if participants else ["Claude"],
+            created_at=datetime.now(),
+            last_activity=datetime.now(),
+            status="active",
+            total_memories=0,
+            avg_importance=0.0
+        )
+
+        self._sessions[session_id] = session_meta
+        if name:
+            self._session_name_to_id[name] = session_id
+
+        self._save_sessions()
+        self._logger.info(f"Started new session: {name or session_id[:8]}")
+
+        return session_id
+
+    def list_sessions(self) -> dict[str, SessionMetadata]:
+        """List all sessions with their metadata."""
+        return dict(self._sessions)
+
+    def get_session_by_name(self, name: str) -> SessionMetadata | None:
+        """Get session metadata by name."""
+        session_id: str | None = self._session_name_to_id.get(name)
+        if session_id:
+            return self._sessions.get(session_id)
+        return None
+
+    # ==================== AUTO-IMPORTANCE CALCULATION (Feature 6) ====================
+
+    def _calculate_importance(self, content: str, tags: list[str], action_items: list[str]) -> float:
+        """
+        Automatically calculate importance score (0.0-1.0) based on content analysis.
+        Uses decision keywords, entity mentions, action items, and content length.
+        """
+        score: float = 0.5  # Start at medium
+
+        content_lower: str = content.lower()
+
+        # Decision keywords boost (+0.3)
+        decision_keywords: list[str] = [
+            "decided", "chose", "will implement", "selected", "determined",
+            "concluded", "agreed", "committed", "finalized"
+        ]
+        for keyword in decision_keywords:
+            if keyword in content_lower:
+                score += 0.3
+                break
+
+        # Entity mentions boost (+0.2)
+        important_entities: list[str] = ["rahul", "claude", "neuralmemory", "pydantic"]
+        entity_count: int = sum(1 for entity in important_entities if entity in content_lower)
+        if entity_count >= 2:
+            score += 0.2
+
+        # Action items presence (+0.2)
+        if action_items and len(action_items) > 0:
+            score += 0.2
+
+        # Content length scoring
+        word_count: int = len(content.split())
+        if word_count > 100:  # Detailed content
+            score += 0.1
+
+        # Normalize to 0.0-1.0
+        return min(1.0, max(0.0, score))
+
+    # ==================== AUTO-TAG SUGGESTION (Feature 8) ====================
+
+    def _suggest_tags(self, content: str) -> list[str]:
+        """Suggest tags based on content analysis."""
+        suggested_tags: list[str] = []
+        content_lower: str = content.lower()
+
+        # Technical keywords
+        tech_keywords: list[str] = [
+            "refactoring", "pydantic", "architecture", "validation", "metadata",
+            "vector", "database", "embedding", "search", "memory", "consolidation",
+            "threading", "session", "query", "preprocessing", "importance",
+            "python", "code", "guidelines", "model", "config", "api", "cli"
+        ]
+        for keyword in tech_keywords:
+            if keyword in content_lower:
+                suggested_tags.append(keyword)
+
+        # Programming concepts
+        if "class" in content_lower or "def " in content_lower:
+            suggested_tags.append("code")
+        if "bug" in content_lower or "fix" in content_lower or "error" in content_lower:
+            suggested_tags.append("bugfix")
+        if "implement" in content_lower or "add" in content_lower or "create" in content_lower:
+            suggested_tags.append("feature")
+
+        # Deduplicate and limit
+        return list(set(suggested_tags))[:10]
+
     def _preprocess_query(self, query: str) -> str:
         self._logger.debug(f"Preprocessing query: {query}")
         processed_query: str = query
@@ -190,14 +356,6 @@ class NeuralVector:
                 topics.append(tag_lower)
 
         return list(set(topics))  # Remove duplicates
-
-    def start_new_session(self, session_id: str | None = None) -> str:
-        """Start a new conversation session for threading memories."""
-        import uuid
-        self._current_session_id = session_id if session_id else str(uuid.uuid4())
-        self._session_sequence_num = 0
-        self._logger.info(f"Started new session: {self._current_session_id}")
-        return self._current_session_id
 
     def get_current_session_id(self) -> str | None:
         """Get the current session ID."""
@@ -983,6 +1141,397 @@ class NeuralVector:
             self._logger.error(f"Consolidation failed: {e}")
             raise VectorDatabaseError(f"Consolidation failed: {e}")
 
+    # ==================== ADVANCED SEARCH FILTERS (Feature 7) ====================
+
+    def filtered_search(
+        self,
+        query: str,
+        n_results: int = 3,
+        memory_type: str | None = None,
+        importance_min: float | None = None,
+        importance_max: float | None = None,
+        project: str | None = None,
+        session_id: str | None = None,
+        entities: list[str] | None = None,
+        topics: list[str] | None = None,
+        has_action_items: bool | None = None,
+        outcome: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None
+    ) -> list[SearchResult]:
+        """Advanced search with multiple metadata filters."""
+        # Build ChromaDB where clause
+        where_filters: dict[str, Any] = {}
+
+        if memory_type:
+            where_filters["memory_type"] = memory_type
+        if importance_min is not None:
+            where_filters["importance"] = {"$gte": importance_min}
+        if importance_max is not None:
+            if "importance" in where_filters:
+                where_filters["importance"]["$lte"] = importance_max
+            else:
+                where_filters["importance"] = {"$lte": importance_max}
+        if project:
+            where_filters["project"] = project
+        if session_id:
+            where_filters["session_id"] = session_id
+        if outcome:
+            where_filters["outcome"] = outcome
+
+        # Perform search with filters
+        results: list[SearchResult] = self.smart_search(query, n_results=n_results * 2)
+
+        # Post-filter for complex criteria
+        filtered_results: list[SearchResult] = []
+        for result in results:
+            if not result.enhanced_metadata:
+                continue
+
+            meta: EnhancedMemoryMetadata = result.enhanced_metadata
+
+            # Entity filter
+            if entities and not any(e in meta.entities for e in entities):
+                continue
+
+            # Topic filter
+            if topics and not any(t in meta.topics for t in topics):
+                continue
+
+            # Action items filter
+            if has_action_items is not None:
+                has_items: bool = len(meta.action_items) > 0
+                if has_items != has_action_items:
+                    continue
+
+            # Date range filter
+            if start_date and meta.timestamp < start_date:
+                continue
+            if end_date and meta.timestamp > end_date:
+                continue
+
+            filtered_results.append(result)
+
+        self._logger.info(f"Filtered search returned {len(filtered_results)} results from {len(results)} candidates")
+        return filtered_results[:n_results]
+
+    # ==================== TEMPORAL QUERIES (Feature 10) ====================
+
+    def search_by_time(
+        self,
+        query: str,
+        start_date: datetime,
+        end_date: datetime,
+        n_results: int = 3
+    ) -> list[SearchResult]:
+        """Search memories within a specific time range."""
+        return self.filtered_search(
+            query=query,
+            n_results=n_results,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+    def search_recent(
+        self,
+        query: str,
+        last_hours: int | None = None,
+        last_days: int | None = None,
+        n_results: int = 3
+    ) -> list[SearchResult]:
+        """Search recent memories (last N hours or days)."""
+        now: datetime = datetime.now()
+        start_date: datetime
+
+        if last_hours is not None:
+            start_date = now - timedelta(hours=last_hours)
+        elif last_days is not None:
+            start_date = now - timedelta(days=last_days)
+        else:
+            start_date = now - timedelta(days=7)  # Default: last week
+
+        return self.search_by_time(query, start_date, now, n_results)
+
+    # ==================== SESSION SUMMARIZATION (Feature 5) ====================
+
+    def end_session(self, summarize: bool = True) -> str | None:
+        """End the current session, optionally creating a summary."""
+        if not self._current_session_id:
+            self._logger.warning("No active session to end")
+            return None
+
+        session_id: str = self._current_session_id
+
+        # Update session status to completed
+        if session_id in self._sessions:
+            session: SessionMetadata = self._sessions[session_id]
+            completed_session: SessionMetadata = SessionMetadata(
+                session_id=session.session_id,
+                name=session.name,
+                project=session.project,
+                topic=session.topic,
+                participants=session.participants,
+                created_at=session.created_at,
+                last_activity=datetime.now(),
+                status="completed",
+                total_memories=session.total_memories,
+                avg_importance=session.avg_importance
+            )
+            self._sessions[session_id] = completed_session
+            self._save_sessions()
+
+        # Create summary if requested
+        summary_text: str | None = None
+        if summarize:
+            summary_text = self._generate_session_summary(session_id)
+            if summary_text:
+                # Store summary as high-importance memory
+                self.store_memory(
+                    content=summary_text,
+                    tags=["summary", "session"],
+                    memory_type="semantic",
+                    importance=0.9,
+                    session_id=session_id
+                )
+
+        self._current_session_id = None
+        self._session_sequence_num = 0
+        self._logger.info(f"Ended session: {session_id}")
+
+        return summary_text
+
+    def _generate_session_summary(self, session_id: str) -> str:
+        """Generate summary of session memories."""
+        if self._collection is None:
+            return ""
+
+        try:
+            # Get all memories from session
+            results = self._collection.get(
+                where={"session_id": session_id},
+                include=["documents", "metadatas"]
+            )
+
+            if not results or not results.get("documents"):
+                return ""
+
+            # Extract key information
+            decisions: list[str] = []
+            all_action_items: list[str] = []
+            outcomes: list[str] = []
+
+            for idx, doc in enumerate(results["documents"]):
+                content_lower: str = doc.lower()
+                metadata: dict[str, Any] = results["metadatas"][idx] if results.get("metadatas") else {}
+
+                # Extract decisions
+                if any(keyword in content_lower for keyword in ["decided", "chose", "will implement"]):
+                    decisions.append(doc[:200])
+
+                # Extract action items
+                action_items_str: str = metadata.get("action_items", "")
+                if action_items_str:
+                    items: list[str] = action_items_str.split(",")
+                    all_action_items.extend(items)
+
+                # Extract outcomes
+                if metadata.get("outcome") == "completed":
+                    outcomes.append(doc[:100])
+
+            # Create summary
+            summary_parts: list[str] = [f"Session Summary ({session_id[:8]})"]
+
+            if decisions:
+                summary_parts.append(f"\nKey Decisions ({len(decisions)}):")
+                summary_parts.extend([f"- {d[:150]}" for d in decisions[:3]])
+
+            if all_action_items:
+                summary_parts.append(f"\nAction Items ({len(all_action_items)}):")
+                summary_parts.extend([f"- {item.strip()}" for item in all_action_items[:5]])
+
+            if outcomes:
+                summary_parts.append(f"\nCompleted Outcomes ({len(outcomes)}):")
+                summary_parts.extend([f"- {o[:100]}" for o in outcomes[:3]])
+
+            return "\n".join(summary_parts)
+
+        except Exception as e:
+            self._logger.error(f"Failed to generate session summary: {e}")
+            return ""
+
+    # ==================== SESSION ANALYTICS (Feature 9) ====================
+
+    def get_session_stats(self, session_id: str | None = None) -> dict[str, Any]:
+        """Get comprehensive statistics for a session."""
+        target_session_id: str | None = session_id or self._current_session_id
+        if not target_session_id:
+            return {}
+
+        if self._collection is None:
+            return {}
+
+        try:
+            # Get session metadata
+            session_meta: SessionMetadata | None = self._sessions.get(target_session_id)
+
+            # Get all memories from session
+            results = self._collection.get(
+                where={"session_id": target_session_id},
+                include=["documents", "metadatas"]
+            )
+
+            if not results or not results.get("documents"):
+                return {
+                    "session_id": target_session_id,
+                    "total_memories": 0
+                }
+
+            # Calculate statistics
+            total_memories: int = len(results["documents"])
+            importances: list[float] = []
+            topics_count: dict[str, int] = {}
+            entities_count: dict[str, int] = {}
+            memory_types: dict[str, int] = {}
+            action_items_total: int = 0
+            action_items_completed: int = 0
+
+            timestamps: list[datetime] = []
+
+            for idx in range(len(results["documents"])):
+                metadata: dict[str, Any] = results["metadatas"][idx] if results.get("metadatas") else {}
+
+                # Importance
+                importance: float = float(metadata.get("importance", 0.5))
+                importances.append(importance)
+
+                # Topics
+                topics_str: str = metadata.get("topics", "")
+                if topics_str:
+                    for topic in topics_str.split(","):
+                        topic = topic.strip()
+                        topics_count[topic] = topics_count.get(topic, 0) + 1
+
+                # Entities
+                entities_str: str = metadata.get("entities", "")
+                if entities_str:
+                    for entity in entities_str.split(","):
+                        entity = entity.strip()
+                        entities_count[entity] = entities_count.get(entity, 0) + 1
+
+                # Memory types
+                memory_type: str = metadata.get("memory_type", "episodic")
+                memory_types[memory_type] = memory_types.get(memory_type, 0) + 1
+
+                # Action items
+                action_items_str: str = metadata.get("action_items", "")
+                if action_items_str:
+                    items: list[str] = [i.strip() for i in action_items_str.split(",") if i.strip()]
+                    action_items_total += len(items)
+
+                if metadata.get("outcome") == "completed":
+                    action_items_completed += 1
+
+                # Timestamps
+                timestamp_str: str = metadata.get("timestamp")
+                if timestamp_str:
+                    timestamps.append(datetime.fromisoformat(timestamp_str))
+
+            # Calculate duration
+            duration_str: str = "N/A"
+            if len(timestamps) >= 2:
+                timestamps.sort()
+                duration: timedelta = timestamps[-1] - timestamps[0]
+                hours: int = int(duration.total_seconds() // 3600)
+                minutes: int = int((duration.total_seconds() % 3600) // 60)
+                duration_str = f"{hours}h {minutes}m"
+
+            # Compile stats
+            stats: dict[str, Any] = {
+                "session_id": target_session_id,
+                "session_name": session_meta.name if session_meta else None,
+                "total_memories": total_memories,
+                "avg_importance": sum(importances) / len(importances) if importances else 0.0,
+                "duration": duration_str,
+                "topic_distribution": dict(sorted(topics_count.items(), key=lambda x: x[1], reverse=True)[:10]),
+                "entity_participation": dict(sorted(entities_count.items(), key=lambda x: x[1], reverse=True)),
+                "memory_type_distribution": memory_types,
+                "action_items_total": action_items_total,
+                "action_items_completed": action_items_completed,
+                "completion_ratio": action_items_completed / action_items_total if action_items_total > 0 else 0.0
+            }
+
+            return stats
+
+        except Exception as e:
+            self._logger.error(f"Failed to get session stats: {e}")
+            return {}
+
+    # ==================== CROSS-SESSION RELATIONSHIPS (Feature 4) ====================
+
+    def add_related_memory(self, memory_id: str, related_memory_id: str, bidirectional: bool = True) -> bool:
+        """Add a relationship between two memories, optionally bidirectional."""
+        try:
+            # Update first memory
+            memory1: MemoryResult | None = self.read_memory(memory_id)
+            if not memory1 or not memory1.enhanced_metadata:
+                return False
+
+            # Add to related_memory_ids
+            related_ids: list[str] = list(memory1.enhanced_metadata.related_memory_ids)
+            if related_memory_id not in related_ids:
+                related_ids.append(related_memory_id)
+
+            # Update metadata in ChromaDB
+            if self._collection:
+                current_meta: dict[str, Any] = dict(memory1.metadata)
+                current_meta["related_memory_ids"] = ",".join(related_ids)
+                self._collection.update(
+                    ids=[memory_id],
+                    metadatas=[current_meta]
+                )
+
+            # Bidirectional linking
+            if bidirectional:
+                memory2: MemoryResult | None = self.read_memory(related_memory_id)
+                if memory2 and memory2.enhanced_metadata:
+                    related_ids_2: list[str] = list(memory2.enhanced_metadata.related_memory_ids)
+                    if memory_id not in related_ids_2:
+                        related_ids_2.append(memory_id)
+                        current_meta_2: dict[str, Any] = dict(memory2.metadata)
+                        current_meta_2["related_memory_ids"] = ",".join(related_ids_2)
+                        self._collection.update(
+                            ids=[related_memory_id],
+                            metadatas=[current_meta_2]
+                        )
+
+            self._logger.info(f"Added relationship: {memory_id} <-> {related_memory_id}")
+            return True
+
+        except Exception as e:
+            self._logger.error(f"Failed to add related memory: {e}")
+            return False
+
+    def get_related_memories(self, memory_id: str, max_depth: int = 2) -> list[MemoryResult]:
+        """Get all related memories following relationship links up to max_depth."""
+        visited: set[str] = set()
+        related: list[MemoryResult] = []
+
+        def traverse(current_id: str, depth: int) -> None:
+            if depth > max_depth or current_id in visited:
+                return
+
+            visited.add(current_id)
+            memory: MemoryResult | None = self.read_memory(current_id)
+
+            if memory and memory.enhanced_metadata:
+                related.append(memory)
+                for related_id in memory.enhanced_metadata.related_memory_ids:
+                    if related_id and related_id not in visited:
+                        traverse(related_id, depth + 1)
+
+        traverse(memory_id, 0)
+        return related[1:]  # Exclude the original memory
+
     def store_memory(
         self,
         content: str,
@@ -995,18 +1544,33 @@ class NeuralVector:
         action_items: list[str] | None = None,
         outcome: str | None = None,
         parent_memory_id: str | None = None,
-        related_memory_ids: list[str] | None = None
+        related_memory_ids: list[str] | None = None,
+        auto_importance: bool = False,
+        auto_tags: bool = False
     ) -> StorageResult:
         if not content.strip():
             error_msg: str = "Content cannot be empty"
             self._logger.error(error_msg)
             raise MemoryValidationError(error_msg)
 
-        self._logger.info(f"Storing memory with {len(tags) if tags else 0} tags")
+        # Auto-tag suggestion (Feature 8)
+        memory_tags: list[str] = tags if tags else []
+        if auto_tags:
+            suggested: list[str] = self._suggest_tags(content)
+            memory_tags = list(set(memory_tags + suggested))
+            self._logger.info(f"Auto-suggested tags: {suggested}")
+
+        self._logger.info(f"Storing memory with {len(memory_tags)} tags")
         self._logger.debug(f"Memory content preview: {content[:100]}...")
 
         memory_date: datetime = self._parse_timestamp(timestamp) if timestamp else datetime.now()
-        memory_tags: list[str] = tags if tags else []
+
+        # Auto-importance calculation (Feature 6)
+        final_importance: float = importance
+        if auto_importance:
+            action_items_list: list[str] = action_items if action_items else []
+            final_importance = self._calculate_importance(content, memory_tags, action_items_list)
+            self._logger.info(f"Auto-calculated importance: {final_importance:.2f}")
 
         short_id: str = self._generate_short_id(content, memory_type)
 
@@ -1036,7 +1600,7 @@ class NeuralVector:
         # Create enhanced metadata
         enhanced_metadata: EnhancedMemoryMetadata = EnhancedMemoryMetadata(
             memory_type=memory_type if memory_type in ["episodic", "semantic", "procedural", "working"] else "episodic",
-            importance=importance,
+            importance=final_importance,  # Use auto-calculated or manual importance
             session_id=actual_session_id,
             project=project,
             entities=entities,
@@ -1076,8 +1640,27 @@ class NeuralVector:
 
             self._logger.info(
                 f"Successfully stored memory with ID: {memory_id}, "
-                f"entities: {entities}, topics: {topics}, importance: {importance}"
+                f"entities: {entities}, topics: {topics}, importance: {final_importance:.2f}"
             )
+
+            # Update session metadata (Feature 3)
+            if actual_session_id and actual_session_id in self._sessions:
+                session: SessionMetadata = self._sessions[actual_session_id]
+                # Create updated session with new values
+                updated_session: SessionMetadata = SessionMetadata(
+                    session_id=session.session_id,
+                    name=session.name,
+                    project=session.project,
+                    topic=session.topic,
+                    participants=session.participants,
+                    created_at=session.created_at,
+                    last_activity=datetime.now(),
+                    status=session.status,
+                    total_memories=session.total_memories + 1,
+                    avg_importance=((session.avg_importance * session.total_memories) + final_importance) / (session.total_memories + 1)
+                )
+                self._sessions[actual_session_id] = updated_session
+                self._save_sessions()
 
             return StorageResult(
                 memory_id=memory_id,

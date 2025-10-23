@@ -10,6 +10,7 @@ from neuralmemory.core.exceptions import (
 
 from neuralmemory.core.models import (
     EnhancedMemoryMetadata,
+    SessionMetadata,
     SearchResult,
     MemoryContent,
     StorageResult,
@@ -30,6 +31,7 @@ __all__ = [
     "BatchValidationError",
     "MemoryValidationError",
     "EnhancedMemoryMetadata",
+    "SessionMetadata",
     "SearchResult",
     "MemoryContent",
     "StorageResult",
