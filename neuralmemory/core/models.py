@@ -23,6 +23,10 @@ class EnhancedMemoryMetadata(BaseModel):
     access_count: int = 0
     last_accessed: datetime | None = None
 
+    # Biological Memory (Decay & Forgetting)
+    decay_counter: int | None = None  # Days until deletion (None = no decay)
+    memory_strength: float = 1.0  # Strength for Ebbinghaus curve
+
     # Relationships
     parent_memory_id: str | None = None
     related_memory_ids: list[str] = []
@@ -129,6 +133,9 @@ class EnhancedMemoryMetadata(BaseModel):
             metadata_dict["related_memory_ids"] = ",".join(self.related_memory_ids)
         if self.short_id:
             metadata_dict["short_id"] = self.short_id
+        if self.decay_counter is not None:
+            metadata_dict["decay_counter"] = self.decay_counter
+        metadata_dict["memory_strength"] = self.memory_strength
 
         return metadata_dict
 
@@ -152,6 +159,8 @@ class EnhancedMemoryMetadata(BaseModel):
             tags=metadata.get("tags", "").split(",") if metadata.get("tags") else [],
             timestamp=datetime.fromisoformat(metadata["timestamp"]) if metadata.get("timestamp") else datetime.now(),
             short_id=metadata.get("short_id"),
+            decay_counter=int(metadata["decay_counter"]) if metadata.get("decay_counter") is not None else None,
+            memory_strength=float(metadata.get("memory_strength", 1.0)),
         )
 
 
@@ -444,3 +453,214 @@ class MemoryResult(BaseModel):
     @property
     def content_preview(self) -> str:
         return self.content[:200] + "..." if len(self.content) > 200 else self.content
+
+
+class ConflictDetectionResult(BaseModel):
+    """Result from contextual conflict detection showing conflicting memories."""
+
+    memory_id: str
+    conflicting_memory_id: str
+    similarity_score: float
+    conflict_type: Literal["update", "contradiction", "duplicate"] = "update"
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('similarity_score')
+    @classmethod
+    def validate_similarity_score(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"Invalid similarity_score: expected value in range [0.0, 1.0], got {v}. "
+                f"Check cosine similarity calculation."
+            )
+        return v
+
+    def __str__(self) -> str:
+        return f"ConflictDetection({self.conflict_type}, similarity={self.similarity_score:.3f})"
+
+    def __repr__(self) -> str:
+        return (
+            f"ConflictDetectionResult(memory_id='{self.memory_id[:8]}...', "
+            f"conflicting_memory_id='{self.conflicting_memory_id[:8]}...', "
+            f"similarity={self.similarity_score:.3f}, type='{self.conflict_type}')"
+        )
+
+
+class MemoryProvenance(BaseModel):
+    """Provenance tracking for memory source, confidence, and version history."""
+
+    source: Literal["direct_statement", "inference", "web_search", "file", "system"] = "direct_statement"
+    confidence: float = 0.95
+    citation: str | None = None  # URL, file path, or message ID
+    created_by: str = "Rahul"  # Who created this memory
+    version_history: list[dict[str, Any]] = []  # Track changes over time
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('confidence')
+    @classmethod
+    def validate_confidence(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"Invalid confidence: expected value in range [0.0, 1.0], got {v}. "
+                f"Use 0.95 for direct statements, 0.7 for strong inferences, 0.5 for weak inferences."
+            )
+        return v
+
+    def __str__(self) -> str:
+        return f"Provenance({self.source}, confidence={self.confidence:.2f}, by={self.created_by})"
+
+    def __repr__(self) -> str:
+        return (
+            f"MemoryProvenance(source='{self.source}', confidence={self.confidence:.2f}, "
+            f"created_by='{self.created_by}', citation='{self.citation}')"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for storage."""
+        return {
+            "source": self.source,
+            "confidence": self.confidence,
+            "citation": self.citation,
+            "created_by": self.created_by,
+            "version_history": self.version_history,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MemoryProvenance:
+        """Create from dictionary."""
+        return cls(
+            source=data.get("source", "direct_statement"),
+            confidence=float(data.get("confidence", 0.95)),
+            citation=data.get("citation"),
+            created_by=data.get("created_by", "Rahul"),
+            version_history=data.get("version_history", []),
+        )
+
+
+class ConsolidationResult(BaseModel):
+    """Result from memory consolidation showing merged memories."""
+
+    consolidated_count: int
+    summary_memory_id: str
+    archived_memory_ids: list[str]
+    consolidation_type: Literal["similarity", "temporal", "entity"] = "similarity"
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('consolidated_count')
+    @classmethod
+    def validate_consolidated_count(cls, v: int) -> int:
+        if v < 2:
+            raise ValueError(
+                f"Invalid consolidated_count: expected at least 2 memories to consolidate, got {v}. "
+                f"Consolidation requires minimum 2 memories."
+            )
+        return v
+
+    def __str__(self) -> str:
+        return f"Consolidation({self.consolidated_count} memories into {self.summary_memory_id[:8]}...)"
+
+    def __repr__(self) -> str:
+        return (
+            f"ConsolidationResult(consolidated_count={self.consolidated_count}, "
+            f"summary_memory_id='{self.summary_memory_id[:8]}...', "
+            f"archived_count={len(self.archived_memory_ids)})"
+        )
+
+
+class MultiHopQuery(BaseModel):
+    """Structured query for multi-hop reasoning across memory graph."""
+
+    starting_query: str
+    temporal_constraint: Literal["before", "after", "during"] | None = None
+    temporal_anchor_memory_id: str | None = None  # The memory to compare against
+    relationship_type: Literal["parent", "related", "any"] = "any"
+    max_hops: int = 3
+    min_relevance: float = 0.6  # Minimum similarity at each hop
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('max_hops')
+    @classmethod
+    def validate_max_hops(cls, v: int) -> int:
+        if not 1 <= v <= 5:
+            raise ValueError(
+                f"Invalid max_hops: expected value in range [1, 5], got {v}. "
+                f"Too many hops can be slow, recommend 2-3 for best performance."
+            )
+        return v
+
+    @field_validator('min_relevance')
+    @classmethod
+    def validate_min_relevance(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"Invalid min_relevance: expected value in range [0.0, 1.0], got {v}."
+            )
+        return v
+
+    def __str__(self) -> str:
+        constraint: str = f" {self.temporal_constraint}" if self.temporal_constraint else ""
+        return f"MultiHopQuery('{self.starting_query}'{constraint}, max_hops={self.max_hops})"
+
+    def __repr__(self) -> str:
+        return (
+            f"MultiHopQuery(starting_query='{self.starting_query}', "
+            f"temporal_constraint='{self.temporal_constraint}', "
+            f"max_hops={self.max_hops}, min_relevance={self.min_relevance})"
+        )
+
+
+class MemoryExport(BaseModel):
+    """Export format for memory backup and sharing."""
+
+    version: str = "3.0"  # Schema version for compatibility
+    export_date: datetime = datetime.now()
+    total_memories: int
+    memories: list[dict[str, Any]]
+    sessions: list[dict[str, Any]] = []
+    metadata: dict[str, Any] = {}
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('total_memories')
+    @classmethod
+    def validate_total_memories(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(
+                f"Invalid total_memories: expected non-negative integer, got {v}."
+            )
+        return v
+
+    def __str__(self) -> str:
+        return f"MemoryExport(v{self.version}, {self.total_memories} memories, {len(self.sessions)} sessions)"
+
+    def __repr__(self) -> str:
+        return (
+            f"MemoryExport(version='{self.version}', export_date='{self.export_date.isoformat()}', "
+            f"total_memories={self.total_memories}, sessions={len(self.sessions)})"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON export."""
+        return {
+            "version": self.version,
+            "export_date": self.export_date.isoformat(),
+            "total_memories": self.total_memories,
+            "memories": self.memories,
+            "sessions": self.sessions,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MemoryExport:
+        """Create from dictionary."""
+        return cls(
+            version=data.get("version", "3.0"),
+            export_date=datetime.fromisoformat(data["export_date"]) if data.get("export_date") else datetime.now(),
+            total_memories=int(data.get("total_memories", 0)),
+            memories=data.get("memories", []),
+            sessions=data.get("sessions", []),
+            metadata=data.get("metadata", {}),
+        )
