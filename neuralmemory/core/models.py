@@ -155,6 +155,102 @@ class EnhancedMemoryMetadata(BaseModel):
         )
 
 
+class SessionMetadata(BaseModel):
+    """Metadata for conversation sessions tracking lifecycle and participants."""
+
+    # Identity
+    session_id: str
+    name: str | None = None
+
+    # Context
+    project: str | None = None
+    topic: str | None = None
+    participants: list[str] = []
+
+    # Lifecycle
+    created_at: datetime = datetime.now()
+    last_activity: datetime = datetime.now()
+    status: Literal["active", "completed", "archived"] = "active"
+
+    # Statistics
+    total_memories: int = 0
+    avg_importance: float = 0.0
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('total_memories')
+    @classmethod
+    def validate_total_memories(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(
+                f"Invalid total_memories: expected non-negative integer, got {v}. "
+                f"Memory count cannot be negative."
+            )
+        return v
+
+    @field_validator('avg_importance')
+    @classmethod
+    def validate_avg_importance(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"Invalid avg_importance: expected value in range [0.0, 1.0], got {v}. "
+                f"Average importance must be between 0 and 1."
+            )
+        return v
+
+    @field_validator('participants')
+    @classmethod
+    def validate_participants(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            raise ValueError(
+                f"Invalid participants: expected list of strings, got {type(v).__name__}. "
+                f"Provide participant names like ['Rahul', 'Claude']."
+            )
+        return v
+
+    def __str__(self) -> str:
+        participants_str: str = ", ".join(self.participants) if self.participants else "None"
+        return f"Session({self.name or self.session_id[:8]}, {self.status}, {self.total_memories} memories, participants: {participants_str})"
+
+    def __repr__(self) -> str:
+        return (
+            f"SessionMetadata(session_id='{self.session_id}', name='{self.name}', "
+            f"status='{self.status}', total_memories={self.total_memories}, "
+            f"participants={self.participants}, avg_importance={self.avg_importance:.2f})"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON storage."""
+        return {
+            "session_id": self.session_id,
+            "name": self.name,
+            "project": self.project,
+            "topic": self.topic,
+            "participants": self.participants,
+            "created_at": self.created_at.isoformat(),
+            "last_activity": self.last_activity.isoformat(),
+            "status": self.status,
+            "total_memories": self.total_memories,
+            "avg_importance": self.avg_importance,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SessionMetadata:
+        """Create from dictionary."""
+        return cls(
+            session_id=data["session_id"],
+            name=data.get("name"),
+            project=data.get("project"),
+            topic=data.get("topic"),
+            participants=data.get("participants", []),
+            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.now(),
+            last_activity=datetime.fromisoformat(data["last_activity"]) if data.get("last_activity") else datetime.now(),
+            status=data.get("status", "active"),
+            total_memories=data.get("total_memories", 0),
+            avg_importance=float(data.get("avg_importance", 0.0)),
+        )
+
+
 class SearchResult(BaseModel):
     rank: int
     content: str
