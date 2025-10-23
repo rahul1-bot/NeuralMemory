@@ -20,7 +20,12 @@ from neuralmemory.core.models import (
     SearchResult,
     MemoryContent,
     StorageResult,
-    MemoryResult
+    MemoryResult,
+    ConflictDetectionResult,
+    MemoryProvenance,
+    ConsolidationResult,
+    MultiHopQuery,
+    MemoryExport
 )
 from neuralmemory.core.config import EmbeddingConfig, RerankerConfig
 from neuralmemory.core.logging_setup import LoggerSetup
@@ -28,7 +33,14 @@ from neuralmemory.engines.embedding import Qwen3EmbeddingEngine
 from neuralmemory.engines.reranker import Qwen3RerankerEngine
 
 class NeuralVector:
-    def __init__(self, db_path: str, enable_session_tracking: bool = True) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        enable_session_tracking: bool = True,
+        enable_contextual_embeddings: bool = True,
+        enable_biological_decay: bool = True,
+        conflict_similarity_threshold: float = 0.93
+    ) -> None:
         self._db_path: Path = Path(db_path)
         self._client: chromadb.PersistentClient | None = None
         self._collection: Any | None = None
@@ -44,6 +56,11 @@ class NeuralVector:
         self._sessions_file: Path = self._db_path / "sessions.json"
         self._sessions: dict[str, SessionMetadata] = {}
         self._session_name_to_id: dict[str, str] = {}  # name -> session_id mapping
+
+        # Advanced Memory Intelligence (Phase 3)
+        self._enable_contextual_embeddings: bool = enable_contextual_embeddings
+        self._enable_biological_decay: bool = enable_biological_decay
+        self._conflict_similarity_threshold: float = conflict_similarity_threshold
 
         log_path: Path = Path(__file__).parent / "logs" / "neuralvector.log"
         self._logger: logging.Logger = LoggerSetup.get_logger("NeuralVector", log_path)
@@ -567,7 +584,10 @@ class NeuralVector:
                     enhanced_metadata=enhanced_meta,
                     success=True
                 )
-                
+
+                # Phase 3: Reinforce memory on access (Feature 2)
+                self.reinforce_memory(memory_id)
+
                 self._logger.info(f"Successfully read memory: {memory_result}")
                 return memory_result
             
@@ -1623,7 +1643,28 @@ class NeuralVector:
             raise VectorDatabaseError(error_msg)
 
         try:
-            content_embedding: Tensor = self._embedding_engine.encode(content, is_query=False)
+            # Phase 3: Contextual Embeddings (Feature 1)
+            context_memories: list[str] = []
+            if self._enable_contextual_embeddings:
+                # Retrieve similar memories for context
+                try:
+                    temp_embedding: Tensor = self._embedding_engine.encode(content, is_query=False)
+                    context_results: dict[str, Any] = self._collection.query(
+                        query_embeddings=[temp_embedding.tolist()],
+                        n_results=3
+                    )
+                    if context_results and context_results['documents'] and len(context_results['documents']) > 0:
+                        context_memories = context_results['documents'][0]
+                        self._logger.debug(f"Retrieved {len(context_memories)} context memories for contextual encoding")
+                except Exception as e:
+                    self._logger.debug(f"Could not retrieve context: {e}")
+
+            # Encode with or without context
+            if context_memories and self._enable_contextual_embeddings:
+                content_embedding_list: list[float] = self._encode_with_context(content, context_memories)
+            else:
+                content_embedding: Tensor = self._embedding_engine.encode(content, is_query=False)
+                content_embedding_list: list[float] = content_embedding.tolist()
 
             import uuid
             memory_id: str = str(uuid.uuid4())
@@ -1633,7 +1674,7 @@ class NeuralVector:
 
             self._collection.add(
                 ids=[memory_id],
-                embeddings=content_embedding.cpu().numpy().tolist(),
+                embeddings=[content_embedding_list],
                 documents=[content],
                 metadatas=[chromadb_metadata]
             )
@@ -1661,6 +1702,35 @@ class NeuralVector:
                 )
                 self._sessions[actual_session_id] = updated_session
                 self._save_sessions()
+
+            # Phase 3: Conflict Detection & Decay (Features 1 & 2)
+            if self._enable_contextual_embeddings:
+                conflicts: list[ConflictDetectionResult] = self.detect_conflicts(
+                    memory_id,
+                    content,
+                    content_embedding_list
+                )
+
+                # Set decay counter on conflicting OLD memories (Feature 2)
+                if conflicts and self._enable_biological_decay:
+                    for conflict in conflicts:
+                        try:
+                            conflict_metadata: dict[str, Any] = self._collection.get(
+                                ids=[conflict.conflicting_memory_id],
+                                include=["metadatas"]
+                            )
+                            if conflict_metadata and conflict_metadata['metadatas']:
+                                meta: dict[str, Any] = conflict_metadata['metadatas'][0]
+                                meta['decay_counter'] = 5  # Start decay on conflicting memory
+                                self._collection.update(
+                                    ids=[conflict.conflicting_memory_id],
+                                    metadatas=[meta]
+                                )
+                                self._logger.info(
+                                    f"Set decay counter on conflicting memory: {conflict.conflicting_memory_id[:8]}..."
+                                )
+                        except Exception as e:
+                            self._logger.warning(f"Failed to set decay counter: {e}")
 
             return StorageResult(
                 memory_id=memory_id,
@@ -1852,4 +1922,544 @@ class NeuralVector:
                 continue
         
         raise ValueError(f"Invalid timestamp format: {timestamp_str}. Supported formats: 'DD/MM/YYYY', 'HH:MM PM, DD/MM/YYYY', 'DD/MM/YYYY HH:MM PM'")
+
+    # ==================== PHASE 3: ADVANCED MEMORY INTELLIGENCE ====================
+
+    # Feature 1: Contextual Embeddings & Conflict Detection
+
+    def _encode_with_context(self, content: str, context_memories: list[str]) -> list[float]:
+        """Encode content WITH context for better similarity detection."""
+        if not self._enable_contextual_embeddings or not context_memories:
+            return self._embedding_engine.encode(content).tolist()
+
+        # Concatenate context with content for encoding
+        context_text: str = "\n".join(context_memories[:3])  # Top 3 similar memories
+        contextualized_content: str = f"Previous context:\n{context_text}\n\nCurrent memory:\n{content}"
+
+        self._logger.debug(f"Encoding with context: {len(context_memories)} memories")
+        return self._embedding_engine.encode(contextualized_content).tolist()
+
+    def detect_conflicts(self, memory_id: str, content: str, embedding: list[float] | None = None) -> list[ConflictDetectionResult]:
+        """Detect conflicting memories using cosine similarity."""
+        if not self._enable_contextual_embeddings:
+            return []
+
+        try:
+            # Use provided embedding or encode without context for conflict detection
+            if embedding is None:
+                embedding_tensor: Tensor = self._embedding_engine.encode(content)
+                embedding = embedding_tensor.tolist()
+
+            # Query ChromaDB for similar memories
+            results: dict[str, Any] = self._collection.query(
+                query_embeddings=[embedding],
+                n_results=5  # Check top 5 for conflicts
+            )
+
+            conflicts: list[ConflictDetectionResult] = []
+
+            if results and results['ids'] and len(results['ids']) > 0:
+                for idx, conflicting_id in enumerate(results['ids'][0]):
+                    if conflicting_id == memory_id:
+                        continue  # Skip self
+
+                    # Calculate similarity (1 - distance for cosine)
+                    distance: float = results['distances'][0][idx]
+                    similarity: float = 1.0 - distance
+
+                    if similarity >= self._conflict_similarity_threshold:
+                        conflict_type: str = "update"
+                        if similarity >= 0.98:
+                            conflict_type = "duplicate"
+                        elif similarity < 0.95:
+                            conflict_type = "contradiction"
+
+                        conflicts.append(ConflictDetectionResult(
+                            memory_id=memory_id,
+                            conflicting_memory_id=conflicting_id,
+                            similarity_score=similarity,
+                            conflict_type=conflict_type
+                        ))
+
+                        self._logger.info(
+                            f"Conflict detected: {memory_id[:8]}... vs {conflicting_id[:8]}... "
+                            f"(similarity={similarity:.3f}, type={conflict_type})"
+                        )
+
+            return conflicts
+
+        except Exception as e:
+            self._logger.error(f"Conflict detection failed: {e}")
+            return []
+
+    # Feature 2: Biological Memory Principles
+
+    def _apply_decay(self, memory_id: str, metadata: EnhancedMemoryMetadata) -> EnhancedMemoryMetadata:
+        """Apply temporal decay to memory strength using Ebbinghaus curve."""
+        if not self._enable_biological_decay or metadata.decay_counter is None:
+            return metadata
+
+        days_since_created: int = (datetime.now() - metadata.timestamp).days
+
+        # Ebbinghaus forgetting curve: strength = base_strength * (0.5 ^ days_passed)
+        decayed_strength: float = metadata.memory_strength * (0.5 ** days_since_created)
+
+        updated_metadata: EnhancedMemoryMetadata = EnhancedMemoryMetadata(
+            **{
+                **metadata.model_dump(),
+                "memory_strength": max(0.0, min(1.0, decayed_strength))
+            }
+        )
+
+        return updated_metadata
+
+    def apply_decay_to_all_memories(self) -> int:
+        """Apply decay to all memories with decay counters, delete expired ones."""
+        if not self._enable_biological_decay:
+            return 0
+
+        try:
+            # Get all memories
+            all_results: dict[str, Any] = self._collection.get()
+
+            if not all_results or not all_results['ids']:
+                return 0
+
+            deleted_count: int = 0
+
+            for idx, memory_id in enumerate(all_results['ids']):
+                metadata_dict: dict[str, Any] = all_results['metadatas'][idx] if all_results['metadatas'] else {}
+
+                if 'decay_counter' in metadata_dict and metadata_dict['decay_counter'] is not None:
+                    decay_counter: int = int(metadata_dict['decay_counter'])
+
+                    # Decrement counter
+                    new_counter: int = decay_counter - 1
+
+                    if new_counter <= 0:
+                        # Delete memory
+                        self._collection.delete(ids=[memory_id])
+                        deleted_count += 1
+                        self._logger.info(f"Deleted expired memory: {memory_id[:8]}... (decay counter reached 0)")
+                    else:
+                        # Update counter
+                        metadata_dict['decay_counter'] = new_counter
+                        self._collection.update(
+                            ids=[memory_id],
+                            metadatas=[metadata_dict]
+                        )
+
+            self._logger.info(f"Applied decay: deleted {deleted_count} memories")
+            return deleted_count
+
+        except Exception as e:
+            self._logger.error(f"Failed to apply decay: {e}")
+            return 0
+
+    def reinforce_memory(self, memory_id: str) -> bool:
+        """Reinforce memory on access, resetting decay counter."""
+        if not self._enable_biological_decay:
+            return True
+
+        try:
+            result: dict[str, Any] = self._collection.get(ids=[memory_id], include=["metadatas"])
+
+            if not result or not result['ids']:
+                return False
+
+            metadata_dict: dict[str, Any] = result['metadatas'][0]
+
+            # Reset decay counter if it exists
+            if 'decay_counter' in metadata_dict and metadata_dict['decay_counter'] is not None:
+                metadata_dict['decay_counter'] = 5  # Reset to 5 days
+                metadata_dict['last_accessed'] = datetime.now().isoformat()
+                metadata_dict['access_count'] = metadata_dict.get('access_count', 0) + 1
+
+                self._collection.update(
+                    ids=[memory_id],
+                    metadatas=[metadata_dict]
+                )
+
+                self._logger.debug(f"Reinforced memory: {memory_id[:8]}... (reset decay counter)")
+
+            return True
+
+        except Exception as e:
+            self._logger.error(f"Failed to reinforce memory: {e}")
+            return False
+
+    # Feature 3: Memory Consolidation Engine
+
+    def consolidate_memories_advanced(
+        self,
+        similarity_threshold: float = 0.85,
+        min_cluster_size: int = 3,
+        max_clusters: int = 10
+    ) -> list[ConsolidationResult]:
+        """Intelligent memory consolidation with clustering and summarization."""
+        try:
+            # Get all memories
+            all_results: dict[str, Any] = self._collection.get(
+                include=["documents", "metadatas", "embeddings"]
+            )
+
+            if not all_results or not all_results['ids'] or len(all_results['ids']) < min_cluster_size:
+                return []
+
+            # Find clusters using similarity
+            clusters: list[list[int]] = self._find_memory_clusters(
+                all_results['embeddings'],
+                similarity_threshold,
+                min_cluster_size
+            )
+
+            consolidation_results: list[ConsolidationResult] = []
+
+            for cluster in clusters[:max_clusters]:
+                # Get memories in cluster
+                cluster_ids: list[str] = [all_results['ids'][idx] for idx in cluster]
+                cluster_contents: list[str] = [all_results['documents'][idx] for idx in cluster]
+
+                # Create consolidated summary
+                summary: str = self._create_cluster_summary(cluster_contents)
+
+                # Store summary as new memory
+                summary_result: StorageResult = self.store_memory(
+                    content=summary,
+                    tags=["consolidated", "summary"],
+                    memory_type="semantic",
+                    importance=0.85
+                )
+
+                # Archive original memories
+                for cid in cluster_ids:
+                    metadata_result: dict[str, Any] = self._collection.get(ids=[cid], include=["metadatas"])
+                    if metadata_result and metadata_result['metadatas']:
+                        meta: dict[str, Any] = metadata_result['metadatas'][0]
+                        meta['outcome'] = "archived"
+                        meta['consolidated_into'] = summary_result.memory_id
+                        self._collection.update(ids=[cid], metadatas=[meta])
+
+                consolidation_results.append(ConsolidationResult(
+                    consolidated_count=len(cluster_ids),
+                    summary_memory_id=summary_result.memory_id,
+                    archived_memory_ids=cluster_ids,
+                    consolidation_type="similarity"
+                ))
+
+                self._logger.info(
+                    f"Consolidated {len(cluster_ids)} memories into {summary_result.memory_id[:8]}..."
+                )
+
+            return consolidation_results
+
+        except Exception as e:
+            self._logger.error(f"Consolidation failed: {e}")
+            return []
+
+    def _find_memory_clusters(
+        self,
+        embeddings: list[list[float]],
+        similarity_threshold: float,
+        min_size: int
+    ) -> list[list[int]]:
+        """Find clusters of similar memories using cosine similarity."""
+        import numpy as np
+
+        if not embeddings or len(embeddings) < min_size:
+            return []
+
+        # Simple greedy clustering
+        embeddings_array = np.array(embeddings)
+        n: int = len(embeddings)
+        visited: set[int] = set()
+        clusters: list[list[int]] = []
+
+        for i in range(n):
+            if i in visited:
+                continue
+
+            cluster: list[int] = [i]
+            visited.add(i)
+
+            # Find similar memories
+            for j in range(i + 1, n):
+                if j in visited:
+                    continue
+
+                # Cosine similarity
+                similarity: float = np.dot(embeddings_array[i], embeddings_array[j]) / (
+                    np.linalg.norm(embeddings_array[i]) * np.linalg.norm(embeddings_array[j])
+                )
+
+                if similarity >= similarity_threshold:
+                    cluster.append(j)
+                    visited.add(j)
+
+            if len(cluster) >= min_size:
+                clusters.append(cluster)
+
+        return clusters
+
+    def _create_cluster_summary(self, contents: list[str]) -> str:
+        """Create summary from cluster of similar memories."""
+        # Extract key points (first sentence from each, deduplicated)
+        key_points: set[str] = set()
+
+        for content in contents[:5]:  # Limit to 5 for summary
+            # Get first sentence
+            first_sentence: str = content.split('.')[0].strip()
+            if len(first_sentence) > 20:  # Meaningful sentence
+                key_points.add(first_sentence)
+
+        summary: str = f"Consolidated summary of {len(contents)} related memories:\n\n"
+        summary += "\n".join(f"- {point}" for point in list(key_points)[:5])
+
+        return summary
+
+    # Feature 4: Memory Provenance & Trust
+
+    def store_memory_with_provenance(
+        self,
+        content: str,
+        provenance: MemoryProvenance,
+        tags: list[str] | None = None,
+        **kwargs
+    ) -> StorageResult:
+        """Store memory with provenance tracking."""
+        # Store provenance in metadata as JSON
+        kwargs['project'] = kwargs.get('project', provenance.created_by)
+
+        # Store as regular memory with provenance in metadata
+        result: StorageResult = self.store_memory(content=content, tags=tags, **kwargs)
+
+        # Update with provenance data
+        try:
+            metadata_result: dict[str, Any] = self._collection.get(ids=[result.memory_id], include=["metadatas"])
+            if metadata_result and metadata_result['metadatas']:
+                meta: dict[str, Any] = metadata_result['metadatas'][0]
+                meta['provenance_source'] = provenance.source
+                meta['provenance_confidence'] = provenance.confidence
+                if provenance.citation:
+                    meta['provenance_citation'] = provenance.citation
+
+                self._collection.update(ids=[result.memory_id], metadatas=[meta])
+
+                self._logger.info(
+                    f"Stored memory with provenance: {result.memory_id[:8]}... "
+                    f"(source={provenance.source}, confidence={provenance.confidence:.2f})"
+                )
+        except Exception as e:
+            self._logger.warning(f"Failed to update provenance: {e}")
+
+        return result
+
+    # Feature 5: Multi-Hop Reasoning Queries
+
+    def multi_hop_search(self, query: MultiHopQuery) -> list[MemoryResult]:
+        """Execute multi-hop reasoning query across memory graph."""
+        try:
+            # Start with initial search
+            initial_results: list[SearchResult] = self.smart_search(
+                query.starting_query,
+                n_results=5
+            )
+
+            if not initial_results:
+                return []
+
+            # Traverse relationships
+            visited: set[str] = set()
+            final_results: list[MemoryResult] = []
+
+            for result in initial_results:
+                if result.memory_id and result.memory_id not in visited:
+                    # Check temporal constraint if specified
+                    if query.temporal_constraint and query.temporal_anchor_memory_id:
+                        if not self._satisfies_temporal_constraint(
+                            result.memory_id,
+                            query.temporal_anchor_memory_id,
+                            query.temporal_constraint
+                        ):
+                            continue
+
+                    # Add to results
+                    memory: MemoryResult | None = self.read_memory(result.memory_id)
+                    if memory:
+                        final_results.append(memory)
+                        visited.add(result.memory_id)
+
+                    # Follow relationships if hops remaining
+                    if query.max_hops > 1:
+                        related: list[MemoryResult] = self.get_related_memories(
+                            result.memory_id,
+                            max_depth=query.max_hops - 1
+                        )
+
+                        for rel_mem in related:
+                            if rel_mem.memory_id not in visited:
+                                final_results.append(rel_mem)
+                                visited.add(rel_mem.memory_id)
+
+            self._logger.info(
+                f"Multi-hop search: '{query.starting_query}' -> {len(final_results)} results "
+                f"(max_hops={query.max_hops})"
+            )
+
+            return final_results[:10]  # Limit to top 10
+
+        except Exception as e:
+            self._logger.error(f"Multi-hop search failed: {e}")
+            return []
+
+    def _satisfies_temporal_constraint(
+        self,
+        memory_id: str,
+        anchor_memory_id: str,
+        constraint: str
+    ) -> bool:
+        """Check if memory satisfies temporal constraint relative to anchor."""
+        try:
+            mem1: MemoryResult | None = self.read_memory(memory_id)
+            mem2: MemoryResult | None = self.read_memory(anchor_memory_id)
+
+            if not mem1 or not mem2:
+                return False
+
+            if constraint == "before":
+                return mem1.timestamp < mem2.timestamp
+            elif constraint == "after":
+                return mem1.timestamp > mem2.timestamp
+            elif constraint == "during":
+                # Within 24 hours
+                delta: timedelta = abs(mem1.timestamp - mem2.timestamp)
+                return delta.total_seconds() < 86400
+
+            return True
+
+        except Exception:
+            return False
+
+    # Feature 6: Memory Export/Import
+
+    def export_memories(
+        self,
+        file_path: str,
+        session_id: str | None = None,
+        project: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None
+    ) -> MemoryExport:
+        """Export memories to JSON file with optional filters."""
+        try:
+            # Get all memories
+            all_results: dict[str, Any] = self._collection.get(
+                include=["documents", "metadatas", "embeddings"]
+            )
+
+            if not all_results or not all_results['ids']:
+                return MemoryExport(total_memories=0, memories=[])
+
+            # Filter memories
+            memories: list[dict[str, Any]] = []
+
+            for idx, memory_id in enumerate(all_results['ids']):
+                metadata: dict[str, Any] = all_results['metadatas'][idx] if all_results['metadatas'] else {}
+
+                # Apply filters
+                if session_id and metadata.get('session_id') != session_id:
+                    continue
+                if project and metadata.get('project') != project:
+                    continue
+                if start_date or end_date:
+                    timestamp_str: str | None = metadata.get('timestamp')
+                    if timestamp_str:
+                        ts: datetime = datetime.fromisoformat(timestamp_str)
+                        if start_date and ts < start_date:
+                            continue
+                        if end_date and ts > end_date:
+                            continue
+
+                # Add to export
+                memories.append({
+                    "id": memory_id,
+                    "content": all_results['documents'][idx],
+                    "metadata": metadata,
+                    "embedding": all_results['embeddings'][idx] if all_results['embeddings'] else None
+                })
+
+            # Create export object
+            export: MemoryExport = MemoryExport(
+                total_memories=len(memories),
+                memories=memories,
+                sessions=[s.to_dict() for s in self._sessions.values()],
+                metadata={"filters": {"session_id": session_id, "project": project}}
+            )
+
+            # Write to file
+            with open(file_path, 'w') as f:
+                json.dump(export.to_dict(), f, indent=2)
+
+            self._logger.info(f"Exported {len(memories)} memories to {file_path}")
+
+            return export
+
+        except Exception as e:
+            self._logger.error(f"Export failed: {e}")
+            raise VectorDatabaseError(f"Export failed: {e}")
+
+    def import_memories(self, file_path: str, merge_duplicates: bool = True) -> int:
+        """Import memories from JSON file."""
+        try:
+            with open(file_path, 'r') as f:
+                data: dict[str, Any] = json.load(f)
+
+            export: MemoryExport = MemoryExport.from_dict(data)
+
+            imported_count: int = 0
+
+            for memory in export.memories:
+                # Check for duplicates if merge enabled
+                if merge_duplicates and memory.get('embedding'):
+                    conflicts: list[ConflictDetectionResult] = self.detect_conflicts(
+                        memory['id'],
+                        memory['content'],
+                        memory['embedding']
+                    )
+
+                    if conflicts:
+                        self._logger.info(f"Skipping duplicate: {memory['id'][:8]}...")
+                        continue
+
+                # Import memory
+                try:
+                    self._collection.add(
+                        ids=[memory['id']],
+                        documents=[memory['content']],
+                        metadatas=[memory['metadata']],
+                        embeddings=[memory['embedding']] if memory.get('embedding') else None
+                    )
+                    imported_count += 1
+                except Exception as e:
+                    self._logger.warning(f"Failed to import {memory['id'][:8]}...: {e}")
+
+            # Import sessions
+            for session_data in export.sessions:
+                try:
+                    session: SessionMetadata = SessionMetadata.from_dict(session_data)
+                    self._sessions[session.session_id] = session
+                    if session.name:
+                        self._session_name_to_id[session.name] = session.session_id
+                except Exception as e:
+                    self._logger.warning(f"Failed to import session: {e}")
+
+            self._save_sessions()
+
+            self._logger.info(f"Imported {imported_count}/{export.total_memories} memories from {file_path}")
+
+            return imported_count
+
+        except Exception as e:
+            self._logger.error(f"Import failed: {e}")
+            raise VectorDatabaseError(f"Import failed: {e}")
 

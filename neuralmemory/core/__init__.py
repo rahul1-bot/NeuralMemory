@@ -14,7 +14,12 @@ from neuralmemory.core.models import (
     SearchResult,
     MemoryContent,
     StorageResult,
-    MemoryResult
+    MemoryResult,
+    ConflictDetectionResult,
+    MemoryProvenance,
+    ConsolidationResult,
+    MultiHopQuery,
+    MemoryExport
 )
 
 from neuralmemory.core.config import (
@@ -36,6 +41,11 @@ __all__ = [
     "MemoryContent",
     "StorageResult",
     "MemoryResult",
+    "ConflictDetectionResult",
+    "MemoryProvenance",
+    "ConsolidationResult",
+    "MultiHopQuery",
+    "MemoryExport",
     "EmbeddingConfig",
     "RerankerConfig",
     "LoggerSetup",
