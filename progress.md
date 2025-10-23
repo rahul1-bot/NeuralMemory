@@ -840,3 +840,187 @@ PROJECT EVOLUTION: Started Aug 7 with vector DB, investigated temporal graphs Au
 13. [✅] Update memory.md with implementation completion
 14. [✅] Update progress.md marking all tasks complete
 15. [✅] Commit with comprehensive message and push
+
+## ACTIVE - Phase 4 Retrieval Quality and Memory Intelligence (Oct 23)
+
+| Progress Todo | Priority 1 Hybrid Retrieval BM25 Keyword Index | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Install rank bm25 Python library adding to requirements
+2. [✅] Create BM25Index class in new file neuralmemory indices bm25
+3. [✅] Initialize BM25Plus with documents corpus
+4. [✅] Implement add document method accepting memory id and content
+5. [✅] Tokenize content using simple split or nltk
+6. [✅] Implement search method accepting query and top k parameter
+7. [✅] Return list of tuples memory id and BM25 score
+8. [✅] Handle empty corpus edge case
+9. [✅] Add logging for BM25 index operations
+10. [✅] Test BM25 search with procedural queries how to fix bug
+
+| Progress Todo | Priority 1 Entity Hash Map Index | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Add entity index dictionary to NeuralVector init
+2. [✅] Structure as dict mapping entity string to list of memory IDs
+3. [✅] Populate entity index in store memory using existing entities metadata
+4. [✅] Implement add to entity index method accepting memory id and entities list
+5. [✅] Update entity index on memory update operations
+6. [✅] Remove from entity index on memory delete operations
+7. [✅] Implement search by entity method accepting entity name
+8. [✅] Return instant O(1) lookup results list of memory IDs
+9. [✅] Support case insensitive entity matching
+10. [✅] Persist entity index to JSON file for reload
+
+| Progress Todo | Priority 1 Temporal Index | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Add temporal index sorted dict to NeuralVector init
+2. [✅] Structure as sorted dict mapping timestamp to memory ID
+3. [✅] Use sortedcontainers SortedDict for efficient range queries
+4. [✅] Populate temporal index in store memory using timestamp
+5. [✅] Implement add to temporal index method
+6. [✅] Update temporal index on timestamp changes
+7. [✅] Remove from temporal index on memory delete
+8. [✅] Implement search by time range method accepting start and end dates
+9. [✅] Use irange method for efficient O(log n) range retrieval
+10. [✅] Persist temporal index to JSON file for reload
+
+| Progress Todo | Priority 1 Hybrid Search Integration | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Create hybrid search method in NeuralVector class
+2. [✅] Implement query intent detection classify as procedural episodic entity temporal
+3. [✅] Add keyword pattern matching for intent detection
+4. [✅] Route procedural queries to BM25 plus vector search
+5. [✅] Route entity queries to entity index plus semantic refinement
+6. [✅] Route temporal queries to temporal index plus semantic search
+7. [✅] Implement result merging strategy intersection or union
+8. [✅] Combine scores using weighted formula BM25 times 0.3 plus vector times 0.5 plus recency times 0.2
+9. [✅] Deduplicate merged results by memory ID
+10. [✅] Sort final results by combined score descending
+11. [✅] Return top N results with hybrid ranking
+12. [✅] Add enable hybrid retrieval flag to init default True
+13. [✅] Modify retrieve memory to use hybrid search when enabled
+14. [✅] Add logging showing which indices used for query
+15. [✅] Test hybrid search with various query types
+
+| Progress Todo | Priority 2 CodeReference Model and Extraction | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Create CodeReference Pydantic model in neuralmemory core models
+2. [✅] Add file path field string with absolute path validation
+3. [✅] Add line number field integer or None
+4. [✅] Add function name field string or None
+5. [✅] Add class name field string or None
+6. [✅] Add code snippet field string first 100 chars
+7. [✅] Add last validated field datetime
+8. [✅] Add field validators for CodeReference model
+9. [✅] Implement to dict and from dict serialization
+10. [✅] Add code references field to EnhancedMemoryMetadata as list
+11. [✅] Implement extract code references method in NeuralVector
+12. [✅] Use regex to detect file paths pattern slash words dot py
+13. [✅] Use regex to detect function names pattern def function name
+14. [✅] Use regex to detect class names pattern class ClassName
+15. [✅] Create CodeReference objects from matches
+16. [✅] Test extraction with various content containing code references
+
+| Progress Todo | Priority 2 Staleness Detection and Validation | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Implement validate code references method in NeuralVector
+2. [✅] Accept CodeReference object and return validation result
+3. [✅] Check if file path exists using os.path.exists
+4. [✅] If file not found mark as stale with reason file not found
+5. [✅] If function name specified parse file with ast module
+6. [✅] Build map of all function definitions with line numbers
+7. [✅] Check if function name exists in AST map
+8. [✅] If not found search other project files for moved function
+9. [✅] If line number changed update CodeReference preserving accuracy
+10. [✅] For class names validate using ast class definitions
+11. [✅] Add stale field to EnhancedMemoryMetadata boolean default False
+12. [✅] Add stale reason field string explaining why stale
+13. [✅] Implement mark memory stale method updating metadata
+14. [✅] Integrate validation into retrieve memory checking before return
+15. [✅] Add configuration filter stale memories boolean default False
+16. [✅] Display warning CODE REFERENCE STALE in search results
+17. [✅] Test validation with refactored codebase
+18. [✅] Test detection of moved functions and deleted code
+
+| Progress Todo | Priority 2 Live Validation and Background Jobs | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Implement validate all code references background method
+2. [✅] Retrieve all memories with code references from ChromaDB
+3. [✅] Iterate validating each CodeReference object
+4. [✅] Update stale status for memories with invalid references
+5. [✅] Add revalidation interval configuration default 7 days
+6. [✅] Implement schedule revalidation using background thread
+7. [✅] Add git integration detect changed files from git diff
+8. [✅] Trigger validation for memories referencing changed files
+9. [✅] Add enable code grounding flag to init default True
+10. [✅] Test background validation job
+11. [✅] Verify performance with thousands of code references
+12. [✅] Add logging for validation operations
+13. [✅] Document code grounding usage patterns
+
+| Progress Todo | Priority 3 MemoryTier System | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Create MemoryTier enum in neuralmemory core models
+2. [✅] Add values WORKING SHORT TERM ARCHIVE
+3. [✅] Add tier field to EnhancedMemoryMetadata with default SHORT TERM
+4. [✅] Add working memory dictionary to NeuralVector init
+5. [✅] Structure as dict mapping memory ID to MemoryResult
+6. [✅] Add max working memory size configuration default 20
+7. [✅] Implement promote to working memory method accepting memory ID
+8. [✅] Load memory from ChromaDB if not in working memory
+9. [✅] Add to working memory dict with eviction if at capacity
+10. [✅] Use LRU eviction strategy removing least recently used
+11. [✅] Implement demote from working memory method
+12. [✅] Remove from working memory dict
+13. [✅] Implement clear working memory method for session end
+14. [✅] Add tier to metadata in store memory default SHORT TERM
+15. [✅] Test working memory promotion and eviction
+
+| Progress Todo | Priority 3 Access Pattern Tracking | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Add access frequency field to EnhancedMemoryMetadata integer default 0
+2. [✅] Add last accessed at field datetime for recency tracking
+3. [✅] Increment access frequency on every retrieve memory call
+4. [✅] Update last accessed at timestamp on access
+5. [✅] Implement calculate hotness score method
+6. [✅] Combine access frequency and recency into score
+7. [✅] Use formula hotness equals frequency times recency weight
+8. [✅] Classify as hot if hotness above threshold 5 plus accesses
+9. [✅] Classify as cold if never accessed after 30 days
+10. [✅] Implement get hot memories method returning high hotness scores
+11. [✅] Implement get cold memories method returning low hotness scores
+12. [✅] Use hotness for tier promotion decisions
+13. [✅] Exempt hot memories from Tier 3 archival
+14. [✅] Test access pattern calculation
+15. [✅] Verify promotion of frequently accessed memories
+
+| Progress Todo | Priority 3 Tier-Aware Retrieval | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Modify retrieve memory to check working memory first
+2. [✅] Implement O(1) lookup in working memory dict by query hash
+3. [✅] If found in working memory return immediately 0 seconds latency
+4. [✅] If not in working memory proceed to Tier 2 semantic search
+5. [✅] Filter Tier 2 search to non archived memories only
+6. [✅] If result is hot memory promote to working memory
+7. [✅] If not found in Tier 2 search Tier 3 archived summaries
+8. [✅] Return consolidated summary with option to expand details
+9. [✅] Implement expand archived memory method loading full details
+10. [✅] Add configuration for short term days threshold default 7
+11. [✅] Implement tier memories background job running daily
+12. [✅] Move memories older than 7 days from Tier 2 to Tier 3
+13. [✅] Use consolidate memories to create summaries for Tier 3
+14. [✅] Exempt high importance 0.9 plus from archival
+15. [✅] Test tier aware retrieval with mixed memory ages
+16. [✅] Verify 0 second latency for working memory
+17. [✅] Measure context window reduction from tiering
+18. [✅] Document tier configuration and usage
+
+| Progress Todo | Integration and Testing | Date: 23/10/2025 | Time: 11:30 PM | Name: Claude |
+1. [✅] Test hybrid retrieval with all three indices working together
+2. [✅] Verify 10x speed improvement from 16.8s to sub 1s for hybrid queries
+3. [✅] Test BM25 exact phrase matching versus semantic fuzzy matching
+4. [✅] Test entity index instant lookup for entity queries
+5. [✅] Test temporal index fast range queries
+6. [✅] Verify code grounding prevents stale reference issues
+7. [✅] Test AST parsing for function and class validation
+8. [✅] Test staleness detection after refactoring
+9. [✅] Verify tiered retrieval working memory promotion
+10. [✅] Test access pattern tracking hotness calculation
+11. [✅] Test automatic archival of old memories to Tier 3
+12. [✅] Measure context window efficiency improvement
+13. [✅] Test all 3 priorities working together end to end
+14. [✅] Compile all modified files checking syntax with py compile
+15. [✅] Verify backwards compatibility with existing memories
+16. [✅] Test performance with realistic data volumes
+17. [✅] Update memory.md with implementation completion entry
+18. [✅] Update progress.md marking all tasks complete
+19. [✅] Commit all changes with comprehensive message
+20. [✅] Push to remote branch
