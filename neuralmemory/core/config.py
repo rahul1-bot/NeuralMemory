@@ -1,25 +1,54 @@
 from __future__ import annotations
-from dataclasses import dataclass
 import torch
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
-@dataclass(frozen=True, slots=True)
-class EmbeddingConfig:
+class EmbeddingConfig(BaseModel):
     model_path: str
     max_length: int
     instruction: str
     device: str
+    model_config = ConfigDict(frozen=True)
 
-    def __post_init__(self) -> None:
-        if self.max_length < 1:
-            raise ValueError("Max length must be positive")
-        if not self.instruction.strip():
-            raise ValueError("Instruction cannot be empty")
-        if self.device not in {"mps", "cpu", "cuda"}:
-            raise ValueError("Device must be mps, cpu, or cuda")
+    @field_validator('max_length')
+    @classmethod
+    def validate_max_length(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"Invalid max_length: expected positive integer (>= 1), got {v}. "
+                f"Check embedding configuration and model requirements."
+            )
+        return v
+
+    @field_validator('instruction')
+    @classmethod
+    def validate_instruction(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError(
+                f"Invalid instruction: expected non-empty string, got empty or whitespace-only string. "
+                f"Provide a meaningful instruction for embedding queries."
+            )
+        return v
+
+    @field_validator('device')
+    @classmethod
+    def validate_device(cls, v: str) -> str:
+        valid_devices: set[str] = {"mps", "cpu", "cuda"}
+        if v not in valid_devices:
+            raise ValueError(
+                f"Invalid device: expected one of {valid_devices}, got '{v}'. "
+                f"Use 'mps' for Apple Silicon, 'cuda' for NVIDIA GPU, or 'cpu' for CPU-only."
+            )
+        return v
 
     def __str__(self) -> str:
-        return f"EmbeddingConfig({self.device}, {self.max_length})"
+        return f"EmbeddingConfig(device={self.device}, max_length={self.max_length})"
+
+    def __repr__(self) -> str:
+        return (
+            f"EmbeddingConfig(model_path='{self.model_path}', max_length={self.max_length}, "
+            f"device='{self.device}')"
+        )
 
     @classmethod
     def create_qwen3_mps_config(cls) -> EmbeddingConfig:
@@ -32,23 +61,52 @@ class EmbeddingConfig:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class RerankerConfig:
+class RerankerConfig(BaseModel):
     model_path: str
     max_length: int
     instruction: str
     device: str
+    model_config = ConfigDict(frozen=True)
 
-    def __post_init__(self) -> None:
-        if self.max_length < 1:
-            raise ValueError("Max length must be positive")
-        if not self.instruction.strip():
-            raise ValueError("Instruction cannot be empty")
-        if self.device not in {"mps", "cpu", "cuda"}:
-            raise ValueError("Device must be mps, cpu, or cuda")
+    @field_validator('max_length')
+    @classmethod
+    def validate_max_length(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(
+                f"Invalid max_length: expected positive integer (>= 1), got {v}. "
+                f"Check reranker configuration and model requirements."
+            )
+        return v
+
+    @field_validator('instruction')
+    @classmethod
+    def validate_instruction(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError(
+                f"Invalid instruction: expected non-empty string, got empty or whitespace-only string. "
+                f"Provide a meaningful instruction for reranking queries."
+            )
+        return v
+
+    @field_validator('device')
+    @classmethod
+    def validate_device(cls, v: str) -> str:
+        valid_devices: set[str] = {"mps", "cpu", "cuda"}
+        if v not in valid_devices:
+            raise ValueError(
+                f"Invalid device: expected one of {valid_devices}, got '{v}'. "
+                f"Use 'mps' for Apple Silicon, 'cuda' for NVIDIA GPU, or 'cpu' for CPU-only."
+            )
+        return v
 
     def __str__(self) -> str:
-        return f"RerankerConfig({self.device}, {self.max_length})"
+        return f"RerankerConfig(device={self.device}, max_length={self.max_length})"
+
+    def __repr__(self) -> str:
+        return (
+            f"RerankerConfig(model_path='{self.model_path}', max_length={self.max_length}, "
+            f"device='{self.device}')"
+        )
 
     @classmethod
     def create_qwen3_mps_config(cls) -> RerankerConfig:
