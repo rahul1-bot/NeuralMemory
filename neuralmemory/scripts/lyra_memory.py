@@ -10,7 +10,7 @@ from neuralmemory.cli import (
 class LyraMemoryArgumentParser(MemoryArgumentParser):
     def _get_description(self) -> str:
         return "Lyra Memory - Neural Vector Search CLI"
-    
+
     def _get_epilog(self) -> str:
         return (
             "Examples:\n"
@@ -33,13 +33,13 @@ class LyraMemoryFormatter(MemoryFormatter):
 class LyraMemoryCLI(MemoryCLI):
     def _create_argument_parser(self) -> MemoryArgumentParser:
         return LyraMemoryArgumentParser()
-    
+
     def _create_formatter(self) -> MemoryFormatter:
         return LyraMemoryFormatter()
-    
+
     def _get_log_filename(self) -> str:
         return "lyra_memory.log"
-    
+
     def _get_logger_name(self) -> str:
         return "LyraMemoryCLI"
 

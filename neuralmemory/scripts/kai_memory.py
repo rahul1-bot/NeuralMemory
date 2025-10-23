@@ -10,7 +10,7 @@ from neuralmemory.cli import (
 class KaiMemoryArgumentParser(MemoryArgumentParser):
     def _get_description(self) -> str:
         return "Kai Memory - Neural Vector Search CLI"
-    
+
     def _get_epilog(self) -> str:
         return (
             "Examples:\n"
@@ -24,10 +24,9 @@ class KaiMemoryArgumentParser(MemoryArgumentParser):
             "    km --store \"Research idea\" --tags \"ai\" --when \"15/08/2025\"\n"
             "    km --store \"| Memory | Topic | Date: DD/MM/YYYY | Time: HH:MM AM/PM | Name: Kai |\""
         )
-    
+
     def _setup_arguments(self) -> None:
         super()._setup_arguments()
-        # Override default database path for Kai - separate from Lyra's data
         for action in self._parser._actions:
             if action.dest == 'db_path':
                 action.default = "/Users/rahulsawhney/.mcp_memory/kai_chroma_db"
@@ -40,13 +39,13 @@ class KaiMemoryFormatter(MemoryFormatter):
 class KaiMemoryCLI(MemoryCLI):
     def _create_argument_parser(self) -> MemoryArgumentParser:
         return KaiMemoryArgumentParser()
-    
+
     def _create_formatter(self) -> MemoryFormatter:
         return KaiMemoryFormatter()
-    
+
     def _get_log_filename(self) -> str:
         return "kai_memory.log"
-    
+
     def _get_logger_name(self) -> str:
         return "KaiMemoryCLI"
 
