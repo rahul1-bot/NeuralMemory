@@ -9,6 +9,7 @@ from neuralmemory.core.exceptions import (
 )
 
 from neuralmemory.core.models import (
+    EnhancedMemoryMetadata,
     SearchResult,
     MemoryContent,
     StorageResult,
@@ -28,6 +29,7 @@ __all__ = [
     "VectorDatabaseError",
     "BatchValidationError",
     "MemoryValidationError",
+    "EnhancedMemoryMetadata",
     "SearchResult",
     "MemoryContent",
     "StorageResult",

@@ -411,3 +411,140 @@ PROJECT EVOLUTION: Started Aug 7 with vector DB, investigated temporal graphs Au
 6. [✅] Push to remote branch successfully
 7. [✅] Verify 202 insertions 47 deletions in commit
 8. [✅] Confirm full compliance with code-guidelines.md
+
+## PLANNED - Vector Database Enhancement (Oct 23)
+
+| Progress Todo | Solution 1 Rich Metadata Schema Implementation | Date: 23/10/2025 | Time: 10:00 PM | Name: Claude |
+1. [ ] Design EnhancedMemoryMetadata Pydantic model in neuralmemory core models
+2. [ ] Add memory_type field with Literal episodic semantic procedural working
+3. [ ] Add importance float field with validator range 0.0 to 1.0
+4. [ ] Add session_id string field for conversation grouping
+5. [ ] Add project string field with None default for context
+6. [ ] Add entities list field for extracted names RAHUL Claude NeuralMemory
+7. [ ] Add topics list field for semantic categorization
+8. [ ] Add action_items list field for tracking tasks
+9. [ ] Add outcome field with Literal completed pending failed cancelled
+10. [ ] Add access_count integer field with default 0
+11. [ ] Add last_accessed datetime field with None default
+12. [ ] Add parent_memory_id string field for conversation threading
+13. [ ] Add related_memory_ids list field for relationship tracking
+14. [ ] Add field validators for all metadata fields
+15. [ ] Add comprehensive repr and str methods
+16. [ ] Update StorageResult model to include new metadata
+17. [ ] Update MemoryResult model to expose metadata fields
+18. [ ] Update SearchResult model with metadata access
+19. [ ] Modify NeuralVector store_memory to accept metadata parameters
+20. [ ] Modify NeuralVector batch_store_memories with metadata support
+21. [ ] Update ChromaDB metadata storage format
+22. [ ] Implement metadata extraction from content during storage
+23. [ ] Add automatic entity extraction RAHUL Claude project names
+24. [ ] Add automatic topic extraction from content and tags
+25. [ ] Test metadata storage and retrieval
+26. [ ] Update CLI to display metadata in search results
+27. [ ] Add CLI flags for filtering by memory_type
+28. [ ] Add CLI flags for filtering by importance threshold
+29. [ ] Add CLI flags for filtering by project
+30. [ ] Verify backward compatibility with existing memories
+
+| Progress Todo | Solution 2 Conversation Threading Implementation | Date: 23/10/2025 | Time: 10:00 PM | Name: Claude |
+1. [ ] Add session tracking to NeuralVector class
+2. [ ] Implement get_current_session_id method
+3. [ ] Implement get_last_memory_in_session method returning memory_id
+4. [ ] Modify store_memory to automatically link parent_memory_id
+5. [ ] Add sequence_num field to metadata for ordering
+6. [ ] Implement get_memory_with_context method accepting memory_id
+7. [ ] Add context_window parameter default 3 memories before and after
+8. [ ] Implement conversation chain traversal via parent_memory_id
+9. [ ] Create get_conversation_thread method returning full chain
+10. [ ] Add get_session_memories method for all memories in session
+11. [ ] Implement temporal ordering by sequence_num and timestamp
+12. [ ] Test conversation threading with multi-turn dialogue
+13. [ ] Add CLI support for viewing conversation threads
+14. [ ] Implement km --thread memory_id showing full conversation
+15. [ ] Add CLI flag for context window size customization
+16. [ ] Test why did we do this query with context retrieval
+17. [ ] Verify parent child relationships preserved correctly
+18. [ ] Add visualization of conversation flow in formatter
+19. [ ] Test session boundary handling across days
+20. [ ] Document conversation threading usage patterns
+
+| Progress Todo | Solution 3 Smart Query Preprocessing Implementation | Date: 23/10/2025 | Time: 10:00 PM | Name: Claude |
+1. [ ] Design query preprocessing pipeline architecture
+2. [ ] Implement expand_query method generating semantic variations
+3. [ ] Add query expansion using synonyms and paraphrasing
+4. [ ] Implement detect_intent method classifying query type
+5. [ ] Add intent categories fact_retrieval process_explanation recent_activity
+6. [ ] Create intent to filter mapping for automatic filtering
+7. [ ] Implement temporal intent detection yesterday last_week recent
+8. [ ] Add project context detection NeuralMemory refactoring guidelines
+9. [ ] Create multi_query_search method combining multiple expansions
+10. [ ] Implement result deduplication across query variations
+11. [ ] Add importance based reranking algorithm
+12. [ ] Combine semantic similarity score with importance score
+13. [ ] Weight by access_count for frequently used memories
+14. [ ] Implement recency boost for recent memories
+15. [ ] Add project context boost for current project memories
+16. [ ] Create smart_search method wrapping all preprocessing
+17. [ ] Add configuration for query expansion depth
+18. [ ] Implement caching for query expansions
+19. [ ] Test smart search vs basic search quality improvement
+20. [ ] Add CLI flag for enabling disabling smart preprocessing
+21. [ ] Document query preprocessing algorithm details
+22. [ ] Test with various query types and intents
+23. [ ] Measure search quality improvement metrics
+24. [ ] Optimize preprocessing performance
+25. [ ] Add logging for debugging query transformations
+
+| Progress Todo | Solution 4 Memory Consolidation Implementation | Date: 23/10/2025 | Time: 10:00 PM | Name: Claude |
+1. [ ] Design memory consolidation architecture
+2. [ ] Implement find_similar_memory_clusters method
+3. [ ] Add similarity threshold parameter default 0.95
+4. [ ] Create clustering algorithm for grouping similar memories
+5. [ ] Implement get_cluster_representative selecting most recent
+6. [ ] Design summary generation for memory clusters
+7. [ ] Implement create_summary method merging cluster into summary
+8. [ ] Add archive_memories method for soft archival
+9. [ ] Create archived boolean field in metadata
+10. [ ] Implement consolidate_memories method running full pipeline
+11. [ ] Add time_threshold_days parameter default 30
+12. [ ] Create consolidation job scheduling mechanism
+13. [ ] Implement periodic cleanup every N days
+14. [ ] Add manual consolidation trigger via CLI
+15. [ ] Create consolidation report showing merged memories
+16. [ ] Implement rollback mechanism for incorrect consolidations
+17. [ ] Add whitelist for memories never to consolidate
+18. [ ] Protect high importance memories from consolidation
+19. [ ] Test consolidation with 100 similar memories
+20. [ ] Measure storage reduction after consolidation
+21. [ ] Verify search quality maintained after consolidation
+22. [ ] Add CLI command km --consolidate with dry run option
+23. [ ] Implement consolidation statistics tracking
+24. [ ] Document consolidation strategy and configuration
+25. [ ] Test at scale with thousands of memories
+
+| Progress Todo | Integration Testing and Documentation | Date: 23/10/2025 | Time: 10:00 PM | Name: Claude |
+1. [ ] Test all four solutions working together
+2. [ ] Verify rich metadata enables smart search
+3. [ ] Verify conversation threading preserves context
+4. [ ] Verify smart preprocessing improves retrieval
+5. [ ] Verify consolidation maintains quality at scale
+6. [ ] Create comprehensive test suite for enhancements
+7. [ ] Test backward compatibility with existing memories
+8. [ ] Migrate existing memories to new metadata schema
+9. [ ] Update README with new features documentation
+10. [ ] Update CLI help text with new commands
+11. [ ] Create usage examples for each enhancement
+12. [ ] Document metadata schema in detail
+13. [ ] Document conversation threading patterns
+14. [ ] Document query preprocessing algorithm
+15. [ ] Document consolidation strategy
+16. [ ] Add troubleshooting guide for common issues
+17. [ ] Create performance benchmarks
+18. [ ] Test memory system with RAHUL info integration
+19. [ ] Verify context window efficiency improvements
+20. [ ] Update memory.md and progress.md with results
+21. [ ] Commit all changes with comprehensive message
+22. [ ] Push to remote branch
+23. [ ] Create final validation report
+24. [ ] Document lessons learned
+25. [ ] Plan next iteration improvements

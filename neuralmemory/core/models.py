@@ -1,7 +1,158 @@
 from __future__ import annotations
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, field_validator
+
+
+class EnhancedMemoryMetadata(BaseModel):
+    """Rich metadata schema for intelligent memory management with classification, relationships, and usage tracking."""
+
+    # Classification
+    memory_type: Literal["episodic", "semantic", "procedural", "working"] = "episodic"
+    importance: float = 0.5
+
+    # Context
+    session_id: str | None = None
+    project: str | None = None
+    entities: list[str] = []
+    topics: list[str] = []
+
+    # Tracking
+    action_items: list[str] = []
+    outcome: Literal["completed", "pending", "failed", "cancelled"] | None = None
+    access_count: int = 0
+    last_accessed: datetime | None = None
+
+    # Relationships
+    parent_memory_id: str | None = None
+    related_memory_ids: list[str] = []
+    sequence_num: int = 0
+
+    # Standard fields
+    tags: list[str] = []
+    timestamp: datetime = datetime.now()
+    short_id: str | None = None
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('importance')
+    @classmethod
+    def validate_importance(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError(
+                f"Invalid importance: expected value in range [0.0, 1.0], got {v}. "
+                f"Use 0.0 for low priority, 0.5 for medium, 1.0 for critical memories."
+            )
+        return v
+
+    @field_validator('access_count')
+    @classmethod
+    def validate_access_count(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(
+                f"Invalid access_count: expected non-negative integer, got {v}. "
+                f"Access count tracks memory retrieval frequency."
+            )
+        return v
+
+    @field_validator('entities')
+    @classmethod
+    def validate_entities(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            raise ValueError(
+                f"Invalid entities: expected list of strings, got {type(v).__name__}. "
+                f"Provide entity names like ['Rahul', 'Claude', 'NeuralMemory']."
+            )
+        return v
+
+    @field_validator('topics')
+    @classmethod
+    def validate_topics(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            raise ValueError(
+                f"Invalid topics: expected list of strings, got {type(v).__name__}. "
+                f"Provide topic keywords like ['refactoring', 'pydantic', 'architecture']."
+            )
+        return v
+
+    @field_validator('action_items')
+    @classmethod
+    def validate_action_items(cls, v: list[str]) -> list[str]:
+        if not isinstance(v, list):
+            raise ValueError(
+                f"Invalid action_items: expected list of strings, got {type(v).__name__}. "
+                f"Provide actionable tasks from memory."
+            )
+        return v
+
+    def __str__(self) -> str:
+        entity_preview: str = ", ".join(self.entities[:3])
+        if len(self.entities) > 3:
+            entity_preview += f" (+{len(self.entities) - 3} more)"
+        return f"EnhancedMetadata(type={self.memory_type}, importance={self.importance:.2f}, entities=[{entity_preview}])"
+
+    def __repr__(self) -> str:
+        return (
+            f"EnhancedMemoryMetadata(memory_type='{self.memory_type}', importance={self.importance:.2f}, "
+            f"session_id='{self.session_id}', project='{self.project}', "
+            f"entities={self.entities}, topics={self.topics}, access_count={self.access_count})"
+        )
+
+    def to_chromadb_dict(self) -> dict[str, Any]:
+        """Convert to ChromaDB-compatible metadata dictionary."""
+        metadata_dict: dict[str, Any] = {
+            "memory_type": self.memory_type,
+            "importance": self.importance,
+            "tags": ",".join(self.tags),
+            "timestamp": self.timestamp.isoformat(),
+            "access_count": self.access_count,
+            "sequence_num": self.sequence_num,
+        }
+
+        if self.session_id:
+            metadata_dict["session_id"] = self.session_id
+        if self.project:
+            metadata_dict["project"] = self.project
+        if self.entities:
+            metadata_dict["entities"] = ",".join(self.entities)
+        if self.topics:
+            metadata_dict["topics"] = ",".join(self.topics)
+        if self.action_items:
+            metadata_dict["action_items"] = ",".join(self.action_items)
+        if self.outcome:
+            metadata_dict["outcome"] = self.outcome
+        if self.last_accessed:
+            metadata_dict["last_accessed"] = self.last_accessed.isoformat()
+        if self.parent_memory_id:
+            metadata_dict["parent_memory_id"] = self.parent_memory_id
+        if self.related_memory_ids:
+            metadata_dict["related_memory_ids"] = ",".join(self.related_memory_ids)
+        if self.short_id:
+            metadata_dict["short_id"] = self.short_id
+
+        return metadata_dict
+
+    @classmethod
+    def from_chromadb_dict(cls, metadata: dict[str, Any]) -> EnhancedMemoryMetadata:
+        """Create from ChromaDB metadata dictionary."""
+        return cls(
+            memory_type=metadata.get("memory_type", "episodic"),
+            importance=float(metadata.get("importance", 0.5)),
+            session_id=metadata.get("session_id"),
+            project=metadata.get("project"),
+            entities=metadata.get("entities", "").split(",") if metadata.get("entities") else [],
+            topics=metadata.get("topics", "").split(",") if metadata.get("topics") else [],
+            action_items=metadata.get("action_items", "").split(",") if metadata.get("action_items") else [],
+            outcome=metadata.get("outcome"),
+            access_count=int(metadata.get("access_count", 0)),
+            last_accessed=datetime.fromisoformat(metadata["last_accessed"]) if metadata.get("last_accessed") else None,
+            parent_memory_id=metadata.get("parent_memory_id"),
+            related_memory_ids=metadata.get("related_memory_ids", "").split(",") if metadata.get("related_memory_ids") else [],
+            sequence_num=int(metadata.get("sequence_num", 0)),
+            tags=metadata.get("tags", "").split(",") if metadata.get("tags") else [],
+            timestamp=datetime.fromisoformat(metadata["timestamp"]) if metadata.get("timestamp") else datetime.now(),
+            short_id=metadata.get("short_id"),
+        )
 
 
 class SearchResult(BaseModel):
@@ -12,6 +163,7 @@ class SearchResult(BaseModel):
     metadata: dict[str, Any]
     memory_id: str | None = None
     short_id: str | None = None
+    enhanced_metadata: EnhancedMemoryMetadata | None = None
     model_config = ConfigDict(frozen=True)
 
     @field_validator('rank')
@@ -158,6 +310,7 @@ class MemoryResult(BaseModel):
     memory_type: str | None
     timestamp: datetime
     metadata: dict[str, Any]
+    enhanced_metadata: EnhancedMemoryMetadata | None = None
     success: bool = True
     model_config = ConfigDict(frozen=True)
 

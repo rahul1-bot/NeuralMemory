@@ -14,6 +14,7 @@ from neuralmemory.core.exceptions import (
     BatchValidationError
 )
 from neuralmemory.core.models import (
+    EnhancedMemoryMetadata,
     SearchResult,
     MemoryContent,
     StorageResult,
@@ -25,17 +26,22 @@ from neuralmemory.engines.embedding import Qwen3EmbeddingEngine
 from neuralmemory.engines.reranker import Qwen3RerankerEngine
 
 class NeuralVector:
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, enable_session_tracking: bool = True) -> None:
         self._db_path: Path = Path(db_path)
         self._client: chromadb.PersistentClient | None = None
         self._collection: Any | None = None
         self._embedding_engine: Qwen3EmbeddingEngine | None = None
         self._reranker_engine: Qwen3RerankerEngine | None = None
-        
+
+        # Session tracking for conversation threading
+        self._enable_session_tracking: bool = enable_session_tracking
+        self._current_session_id: str | None = None
+        self._session_sequence_num: int = 0
+
         log_path: Path = Path(__file__).parent / "logs" / "neuralvector.log"
         self._logger: logging.Logger = LoggerSetup.get_logger("NeuralVector", log_path)
         self._logger.info(f"Initializing NeuralVector with database path: {db_path}")
-        
+
         self._initialize_components()
     
     def _initialize_components(self) -> None:
@@ -138,9 +144,209 @@ class NeuralVector:
         
         if processed_query != query:
             self._logger.info(f"Query preprocessed: '{query}' -> '{processed_query}'")
-        
+
         return processed_query
-    
+
+    def _extract_entities(self, content: str, tags: list[str]) -> list[str]:
+        """Extract entity names from content and tags."""
+        entities: list[str] = []
+
+        # Common entity names for this memory system
+        common_entities: list[str] = ["Rahul", "Claude", "NeuralMemory", "Pydantic", "ChromaDB", "Qwen3"]
+
+        content_lower: str = content.lower()
+        for entity in common_entities:
+            if entity.lower() in content_lower:
+                entities.append(entity)
+
+        # Extract entities from tags that look like names (capitalized)
+        for tag in tags:
+            if tag and tag[0].isupper() and tag not in entities:
+                entities.append(tag)
+
+        return list(set(entities))  # Remove duplicates
+
+    def _extract_topics(self, content: str, tags: list[str]) -> list[str]:
+        """Extract topic keywords from content and tags."""
+        topics: list[str] = []
+
+        # Common technical topics
+        technical_keywords: list[str] = [
+            "refactoring", "pydantic", "architecture", "validation", "metadata",
+            "vector", "database", "embedding", "search", "memory", "consolidation",
+            "threading", "session", "query", "preprocessing", "importance",
+            "python", "code", "guidelines", "model", "config"
+        ]
+
+        content_lower: str = content.lower()
+        for keyword in technical_keywords:
+            if keyword in content_lower:
+                topics.append(keyword)
+
+        # Add all tags as topics (lowercase)
+        for tag in tags:
+            tag_lower: str = tag.lower()
+            if tag_lower not in topics and not tag[0].isupper():  # Don't include entity-like tags
+                topics.append(tag_lower)
+
+        return list(set(topics))  # Remove duplicates
+
+    def start_new_session(self, session_id: str | None = None) -> str:
+        """Start a new conversation session for threading memories."""
+        import uuid
+        self._current_session_id = session_id if session_id else str(uuid.uuid4())
+        self._session_sequence_num = 0
+        self._logger.info(f"Started new session: {self._current_session_id}")
+        return self._current_session_id
+
+    def get_current_session_id(self) -> str | None:
+        """Get the current session ID."""
+        return self._current_session_id
+
+    def _get_last_memory_in_session(self, session_id: str) -> str | None:
+        """Get the most recent memory ID in the given session."""
+        if self._collection is None:
+            return None
+
+        try:
+            results = self._collection.get(
+                where={"session_id": session_id},
+                include=["metadatas"]
+            )
+
+            if results and results.get("ids") and results.get("metadatas"):
+                # Find memory with highest sequence number
+                max_seq: int = -1
+                last_memory_id: str | None = None
+
+                for idx, metadata in enumerate(results["metadatas"]):
+                    seq_num: int = int(metadata.get("sequence_num", 0))
+                    if seq_num > max_seq:
+                        max_seq = seq_num
+                        last_memory_id = results["ids"][idx]
+
+                return last_memory_id
+
+            return None
+
+        except Exception as e:
+            self._logger.warning(f"Failed to get last memory in session: {e}")
+            return None
+
+    def get_conversation_thread(self, memory_id: str) -> list[MemoryResult]:
+        """Get the full conversation thread for a given memory by following parent links."""
+        thread: list[MemoryResult] = []
+        current_id: str | None = memory_id
+
+        while current_id:
+            memory: MemoryResult | None = self.read_memory(current_id)
+            if not memory:
+                break
+
+            thread.insert(0, memory)  # Add to beginning for chronological order
+
+            # Get parent memory ID from enhanced metadata
+            if memory.enhanced_metadata and memory.enhanced_metadata.parent_memory_id:
+                current_id = memory.enhanced_metadata.parent_memory_id
+            else:
+                break
+
+        self._logger.info(f"Retrieved conversation thread with {len(thread)} memories")
+        return thread
+
+    def get_memory_with_context(
+        self,
+        memory_id: str,
+        context_window: int = 3
+    ) -> dict[str, list[MemoryResult]]:
+        """
+        Get a memory with surrounding context from the same session.
+        Returns dict with 'before', 'target', and 'after' keys.
+        """
+        target_memory: MemoryResult | None = self.read_memory(memory_id)
+        if not target_memory or not target_memory.enhanced_metadata:
+            return {"before": [], "target": [], "after": []}
+
+        session_id: str | None = target_memory.enhanced_metadata.session_id
+        if not session_id or self._collection is None:
+            return {"before": [], "target": [target_memory], "after": []}
+
+        try:
+            # Get all memories in the session
+            results = self._collection.get(
+                where={"session_id": session_id},
+                include=["documents", "metadatas"]
+            )
+
+            if not results or not results.get("ids"):
+                return {"before": [], "target": [target_memory], "after": []}
+
+            # Parse all memories with sequence numbers
+            session_memories: list[tuple[int, MemoryResult]] = []
+            target_seq: int = target_memory.enhanced_metadata.access_count
+
+            for idx in range(len(results["ids"])):
+                metadata: dict[str, Any] = results["metadatas"][idx] if results.get("metadatas") else {}
+                seq_num: int = int(metadata.get("sequence_num", 0))
+
+                enhanced_meta: EnhancedMemoryMetadata | None = None
+                if metadata:
+                    try:
+                        enhanced_meta = EnhancedMemoryMetadata.from_chromadb_dict(metadata)
+                        if enhanced_meta.parent_memory_id:
+                            target_seq = seq_num  # Update target sequence if this is our memory
+                    except Exception:
+                        pass
+
+                tags: list[str] = metadata.get("tags", "").split(",") if metadata.get("tags") else []
+                timestamp: datetime = datetime.fromisoformat(metadata["timestamp"]) if metadata.get("timestamp") else datetime.now()
+
+                mem_result: MemoryResult = MemoryResult(
+                    memory_id=results["ids"][idx],
+                    short_id=metadata.get("short_id"),
+                    content=results["documents"][idx] if results.get("documents") else "",
+                    tags=tags,
+                    memory_type=metadata.get("memory_type"),
+                    timestamp=timestamp,
+                    metadata=metadata,
+                    enhanced_metadata=enhanced_meta,
+                    success=True
+                )
+
+                session_memories.append((seq_num, mem_result))
+
+            # Sort by sequence number
+            session_memories.sort(key=lambda x: x[0])
+
+            # Find target index
+            target_idx: int = -1
+            for idx, (seq, mem) in enumerate(session_memories):
+                if mem.memory_id == memory_id:
+                    target_idx = idx
+                    break
+
+            if target_idx == -1:
+                return {"before": [], "target": [target_memory], "after": []}
+
+            # Get context window
+            before_memories: list[MemoryResult] = [mem for _, mem in session_memories[max(0, target_idx - context_window):target_idx]]
+            after_memories: list[MemoryResult] = [mem for _, mem in session_memories[target_idx + 1:min(len(session_memories), target_idx + context_window + 1)]]
+
+            self._logger.info(
+                f"Retrieved context for memory {memory_id}: "
+                f"{len(before_memories)} before, {len(after_memories)} after"
+            )
+
+            return {
+                "before": before_memories,
+                "target": [target_memory],
+                "after": after_memories
+            }
+
+        except Exception as e:
+            self._logger.error(f"Failed to get memory with context: {e}")
+            return {"before": [], "target": [target_memory], "after": []}
+
     def read_memory(self, identifier: str) -> MemoryResult | None:
         if not identifier:
             error_msg: str = "Identifier cannot be empty"
@@ -183,7 +389,15 @@ class NeuralVector:
                         timestamp = datetime.fromisoformat(metadata["timestamp"])
                     except (ValueError, TypeError):
                         self._logger.warning(f"Invalid timestamp format: {metadata.get('timestamp')}")
-                
+
+                # Parse enhanced metadata if available
+                enhanced_meta: EnhancedMemoryMetadata | None = None
+                if metadata:
+                    try:
+                        enhanced_meta = EnhancedMemoryMetadata.from_chromadb_dict(metadata)
+                    except Exception as e:
+                        self._logger.warning(f"Failed to parse enhanced metadata: {e}")
+
                 memory_result: MemoryResult = MemoryResult(
                     memory_id=memory_id,
                     short_id=metadata.get("short_id"),
@@ -192,6 +406,7 @@ class NeuralVector:
                     memory_type=metadata.get("memory_type"),
                     timestamp=timestamp,
                     metadata=metadata,
+                    enhanced_metadata=enhanced_meta,
                     success=True
                 )
                 
@@ -253,7 +468,15 @@ class NeuralVector:
                                 timestamp = datetime.fromisoformat(metadata["timestamp"])
                             except (ValueError, TypeError):
                                 pass
-                        
+
+                        # Parse enhanced metadata if available
+                        enhanced_meta: EnhancedMemoryMetadata | None = None
+                        if metadata:
+                            try:
+                                enhanced_meta = EnhancedMemoryMetadata.from_chromadb_dict(metadata)
+                            except Exception as e:
+                                self._logger.warning(f"Failed to parse enhanced metadata: {e}")
+
                         memory_results.append(MemoryResult(
                             memory_id=memory_id,
                             short_id=metadata.get("short_id"),
@@ -262,6 +485,7 @@ class NeuralVector:
                             memory_type=metadata.get("memory_type"),
                             timestamp=timestamp,
                             metadata=metadata,
+                            enhanced_metadata=enhanced_meta,
                             success=True
                         ))
             
@@ -289,7 +513,15 @@ class NeuralVector:
                                     timestamp = datetime.fromisoformat(metadata["timestamp"])
                                 except (ValueError, TypeError):
                                     pass
-                            
+
+                            # Parse enhanced metadata if available
+                            enhanced_meta: EnhancedMemoryMetadata | None = None
+                            if metadata:
+                                try:
+                                    enhanced_meta = EnhancedMemoryMetadata.from_chromadb_dict(metadata)
+                                except Exception as e:
+                                    self._logger.warning(f"Failed to parse enhanced metadata: {e}")
+
                             memory_results.append(MemoryResult(
                                 memory_id=memory_id,
                                 short_id=metadata.get("short_id"),
@@ -298,6 +530,7 @@ class NeuralVector:
                                 memory_type=metadata.get("memory_type"),
                                 timestamp=timestamp,
                                 metadata=metadata,
+                                enhanced_metadata=enhanced_meta,
                                 success=True
                             ))
             
@@ -562,6 +795,14 @@ class NeuralVector:
             search_results: list[SearchResult] = []
             for rank, (idx, score) in enumerate(reranked_indices, 1):
                 if idx < len(documents):
+                    # Parse enhanced metadata if available
+                    enhanced_meta: EnhancedMemoryMetadata | None = None
+                    if idx < len(metadatas) and metadatas[idx]:
+                        try:
+                            enhanced_meta = EnhancedMemoryMetadata.from_chromadb_dict(metadatas[idx])
+                        except Exception as e:
+                            self._logger.warning(f"Failed to parse enhanced metadata: {e}")
+
                     result: SearchResult = SearchResult(
                         rank=rank,
                         content=documents[idx],
@@ -569,10 +810,15 @@ class NeuralVector:
                         cosine_distance=distances[idx],
                         metadata=metadatas[idx],
                         memory_id=ids[idx],
-                        short_id=metadatas[idx].get("short_id") if idx < len(metadatas) else None
+                        short_id=metadatas[idx].get("short_id") if idx < len(metadatas) else None,
+                        enhanced_metadata=enhanced_meta
                     )
                     search_results.append(result)
-                    self._logger.debug(f"Result {rank}: score={score:.3f}, distance={distances[idx]:.3f}")
+                    self._logger.debug(
+                        f"Result {rank}: score={score:.3f}, distance={distances[idx]:.3f}, "
+                        f"type={enhanced_meta.memory_type if enhanced_meta else 'N/A'}, "
+                        f"importance={enhanced_meta.importance if enhanced_meta else 'N/A'}"
+                    )
             
             total_time: float = time.time() - start_time
             self._logger.info(f"Retrieved {len(search_results)} results in {total_time:.3f} seconds")
@@ -582,56 +828,264 @@ class NeuralVector:
         except Exception as e:
             self._logger.error(f"Memory retrieval failed: {e}")
             raise VectorDatabaseError(f"Memory retrieval failed: {e}")
-    
-    def store_memory(self, content: str, tags: list[str] | None = None, timestamp: str | None = None, memory_type: str | None = None) -> StorageResult:
+
+    def smart_search(
+        self,
+        query: str,
+        n_results: int = 3,
+        importance_weight: float = 0.3,
+        recency_weight: float = 0.2
+    ) -> list[SearchResult]:
+        """
+        Enhanced search with importance and recency reranking.
+        Combines semantic similarity with metadata-based scoring.
+        """
+        # Get base results from semantic search
+        results: list[SearchResult] = self.retrieve_memory(query, n_results=n_results * 2)
+
+        if not results:
+            return results
+
+        # Re-rank with importance and recency
+        scored_results: list[tuple[float, SearchResult]] = []
+
+        for result in results:
+            # Base score from reranker
+            score: float = result.rerank_score
+
+            # Add importance bonus if available
+            if result.enhanced_metadata:
+                importance_bonus: float = result.enhanced_metadata.importance * importance_weight
+                score += importance_bonus
+
+                # Add recency bonus (memories from last 7 days get boost)
+                days_old: int = (datetime.now() - result.enhanced_metadata.timestamp).days
+                if days_old < 7:
+                    recency_bonus: float = (7 - days_old) / 7 * recency_weight
+                    score += recency_bonus
+
+            scored_results.append((score, result))
+
+        # Sort by new score and return top N
+        scored_results.sort(key=lambda x: x[0], reverse=True)
+
+        final_results: list[SearchResult] = []
+        for rank, (score, result) in enumerate(scored_results[:n_results], 1):
+            # Create new SearchResult with updated rank
+            final_result: SearchResult = SearchResult(
+                rank=rank,
+                content=result.content,
+                rerank_score=score,  # Use combined score
+                cosine_distance=result.cosine_distance,
+                metadata=result.metadata,
+                memory_id=result.memory_id,
+                short_id=result.short_id,
+                enhanced_metadata=result.enhanced_metadata
+            )
+            final_results.append(final_result)
+
+        self._logger.info(f"Smart search completed with importance/recency reranking: {len(final_results)} results")
+        return final_results
+
+    def consolidate_memories(
+        self,
+        similarity_threshold: float = 0.95,
+        dry_run: bool = True
+    ) -> dict[str, Any]:
+        """
+        Consolidate similar memories to reduce database bloat.
+        Returns statistics about consolidation.
+        """
+        if self._collection is None:
+            error_msg: str = "Database not initialized"
+            self._logger.error(error_msg)
+            raise VectorDatabaseError(error_msg)
+
+        self._logger.info(f"Starting memory consolidation (dry_run={dry_run}, threshold={similarity_threshold})")
+
+        try:
+            # Get all memories
+            all_memories = self._collection.get(include=["embeddings", "metadatas", "documents"])
+
+            if not all_memories or not all_memories.get("ids"):
+                return {"consolidated": 0, "kept": 0, "total": 0}
+
+            total: int = len(all_memories["ids"])
+            to_archive: list[str] = []
+
+            # Simple consolidation: find very similar memories and keep most recent
+            embeddings = all_memories.get("embeddings", [])
+            metadatas = all_memories.get("metadatas", [])
+            ids = all_memories["ids"]
+
+            import numpy as np
+
+            for i in range(len(embeddings)):
+                if ids[i] in to_archive:
+                    continue
+
+                for j in range(i + 1, len(embeddings)):
+                    if ids[j] in to_archive:
+                        continue
+
+                    # Calculate similarity
+                    emb_i = np.array(embeddings[i])
+                    emb_j = np.array(embeddings[j])
+                    similarity: float = float(np.dot(emb_i, emb_j) / (np.linalg.norm(emb_i) * np.linalg.norm(emb_j)))
+
+                    if similarity > similarity_threshold:
+                        # Keep the one with higher importance or more recent
+                        importance_i: float = float(metadatas[i].get("importance", 0.5))
+                        importance_j: float = float(metadatas[j].get("importance", 0.5))
+
+                        timestamp_i = metadatas[i].get("timestamp", "")
+                        timestamp_j = metadatas[j].get("timestamp", "")
+
+                        # Archive the less important or older one
+                        if importance_i > importance_j:
+                            to_archive.append(ids[j])
+                        elif importance_j > importance_i:
+                            to_archive.append(ids[i])
+                            break  # i is archived, move to next i
+                        elif timestamp_j > timestamp_i:
+                            to_archive.append(ids[i])
+                            break
+                        else:
+                            to_archive.append(ids[j])
+
+            # Perform archival if not dry run
+            if not dry_run and to_archive:
+                # Mark as archived in metadata
+                for memory_id in to_archive:
+                    try:
+                        memory: MemoryResult | None = self.read_memory(memory_id)
+                        if memory and memory.metadata:
+                            updated_meta: dict[str, Any] = dict(memory.metadata)
+                            updated_meta["archived"] = "true"
+                            self._collection.update(
+                                ids=[memory_id],
+                                metadatas=[updated_meta]
+                            )
+                    except Exception as e:
+                        self._logger.warning(f"Failed to archive memory {memory_id}: {e}")
+
+            stats: dict[str, Any] = {
+                "total": total,
+                "consolidated": len(to_archive),
+                "kept": total - len(to_archive),
+                "dry_run": dry_run
+            }
+
+            self._logger.info(f"Consolidation complete: {stats}")
+            return stats
+
+        except Exception as e:
+            self._logger.error(f"Consolidation failed: {e}")
+            raise VectorDatabaseError(f"Consolidation failed: {e}")
+
+    def store_memory(
+        self,
+        content: str,
+        tags: list[str] | None = None,
+        timestamp: str | None = None,
+        memory_type: str | None = None,
+        importance: float = 0.5,
+        session_id: str | None = None,
+        project: str | None = None,
+        action_items: list[str] | None = None,
+        outcome: str | None = None,
+        parent_memory_id: str | None = None,
+        related_memory_ids: list[str] | None = None
+    ) -> StorageResult:
         if not content.strip():
             error_msg: str = "Content cannot be empty"
             self._logger.error(error_msg)
             raise MemoryValidationError(error_msg)
-        
+
         self._logger.info(f"Storing memory with {len(tags) if tags else 0} tags")
         self._logger.debug(f"Memory content preview: {content[:100]}...")
-        
+
         memory_date: datetime = self._parse_timestamp(timestamp) if timestamp else datetime.now()
         memory_tags: list[str] = tags if tags else []
-        
+
         short_id: str = self._generate_short_id(content, memory_type)
-        
-        memory: MemoryContent = MemoryContent(
-            content=content,
+
+        # Extract entities and topics automatically
+        entities: list[str] = self._extract_entities(content, memory_tags)
+        topics: list[str] = self._extract_topics(content, memory_tags)
+
+        # Handle session tracking and automatic parent linking
+        actual_session_id: str | None = session_id
+        actual_parent_id: str | None = parent_memory_id
+        sequence_num: int = 0
+
+        if self._enable_session_tracking:
+            # Use current session if no explicit session_id provided
+            if actual_session_id is None and self._current_session_id:
+                actual_session_id = self._current_session_id
+
+            # Auto-link to previous memory in session if no explicit parent
+            if actual_parent_id is None and actual_session_id:
+                actual_parent_id = self._get_last_memory_in_session(actual_session_id)
+
+            # Increment sequence number
+            if actual_session_id == self._current_session_id:
+                self._session_sequence_num += 1
+                sequence_num = self._session_sequence_num
+
+        # Create enhanced metadata
+        enhanced_metadata: EnhancedMemoryMetadata = EnhancedMemoryMetadata(
+            memory_type=memory_type if memory_type in ["episodic", "semantic", "procedural", "working"] else "episodic",
+            importance=importance,
+            session_id=actual_session_id,
+            project=project,
+            entities=entities,
+            topics=topics,
+            action_items=action_items if action_items else [],
+            outcome=outcome if outcome in ["completed", "pending", "failed", "cancelled"] else None,
+            access_count=0,
+            last_accessed=None,
+            parent_memory_id=actual_parent_id,
+            related_memory_ids=related_memory_ids if related_memory_ids else [],
+            sequence_num=sequence_num,
             tags=memory_tags,
             timestamp=memory_date,
-            memory_type=memory_type,
             short_id=short_id
         )
-        
+
         if self._embedding_engine is None or self._collection is None:
             error_msg: str = "Components not initialized"
             self._logger.error(error_msg)
             raise VectorDatabaseError(error_msg)
-        
+
         try:
             content_embedding: Tensor = self._embedding_engine.encode(content, is_query=False)
-            
+
             import uuid
             memory_id: str = str(uuid.uuid4())
-            
+
+            # Convert enhanced metadata to ChromaDB format
+            chromadb_metadata: dict[str, Any] = enhanced_metadata.to_chromadb_dict()
+
             self._collection.add(
                 ids=[memory_id],
                 embeddings=content_embedding.cpu().numpy().tolist(),
-                documents=[memory.content],
-                metadatas=[memory.metadata]
+                documents=[content],
+                metadatas=[chromadb_metadata]
             )
-            
-            self._logger.info(f"Successfully stored memory with ID: {memory_id}")
-            
+
+            self._logger.info(
+                f"Successfully stored memory with ID: {memory_id}, "
+                f"entities: {entities}, topics: {topics}, importance: {importance}"
+            )
+
             return StorageResult(
                 memory_id=memory_id,
                 short_id=short_id,
                 success=True,
-                message=f"Memory stored with {len(memory_tags)} tags - {memory_date.strftime('%d/%m/%Y %I:%M %p')}"
+                message=f"Memory stored with {len(memory_tags)} tags, {len(entities)} entities, {len(topics)} topics - {memory_date.strftime('%d/%m/%Y %I:%M %p')}"
             )
-            
+
         except Exception as e:
             self._logger.error(f"Memory storage failed: {e}")
             raise VectorDatabaseError(f"Memory storage failed: {e}")
