@@ -1,7 +1,85 @@
 from __future__ import annotations
 from datetime import datetime
+from enum import Enum
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, field_validator
+
+
+class MemoryTier(str, Enum):
+    """Memory tier classification for hierarchical storage and retrieval optimization."""
+    WORKING = "working"  # Current session, in-context (0s retrieval)
+    SHORT_TERM = "short_term"  # Recent memories (last 7 days, vector DB, 16s retrieval)
+    ARCHIVE = "archive"  # Ancient memories (>7 days, consolidated summaries, 30s retrieval)
+
+
+class CodeReference(BaseModel):
+    """Reference to specific code location for memory grounding and staleness detection."""
+
+    file_path: str  # Absolute path to file
+    line_number: int | None = None  # Line number in file
+    function_name: str | None = None  # Function name if applicable
+    class_name: str | None = None  # Class name if applicable
+    code_snippet: str | None = None  # First 100 chars for verification
+    last_validated: datetime | None = None  # When reference was last validated
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator('file_path')
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError(
+                f"Invalid file_path: expected non-empty string, got empty string. "
+                f"Provide absolute path like /path/to/file.py"
+            )
+        return v
+
+    @field_validator('line_number')
+    @classmethod
+    def validate_line_number(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError(
+                f"Invalid line_number: expected positive integer, got {v}. "
+                f"Line numbers start from 1."
+            )
+        return v
+
+    def __str__(self) -> str:
+        location: str = self.file_path
+        if self.function_name:
+            location += f":{self.function_name}"
+        elif self.line_number:
+            location += f":{self.line_number}"
+        return f"CodeRef({location})"
+
+    def __repr__(self) -> str:
+        return (
+            f"CodeReference(file_path='{self.file_path}', line_number={self.line_number}, "
+            f"function_name='{self.function_name}', class_name='{self.class_name}')"
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for storage."""
+        return {
+            "file_path": self.file_path,
+            "line_number": self.line_number,
+            "function_name": self.function_name,
+            "class_name": self.class_name,
+            "code_snippet": self.code_snippet,
+            "last_validated": self.last_validated.isoformat() if self.last_validated else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CodeReference:
+        """Create from dictionary."""
+        return cls(
+            file_path=data["file_path"],
+            line_number=data.get("line_number"),
+            function_name=data.get("function_name"),
+            class_name=data.get("class_name"),
+            code_snippet=data.get("code_snippet"),
+            last_validated=datetime.fromisoformat(data["last_validated"]) if data.get("last_validated") else None,
+        )
 
 
 class EnhancedMemoryMetadata(BaseModel):
@@ -31,6 +109,15 @@ class EnhancedMemoryMetadata(BaseModel):
     parent_memory_id: str | None = None
     related_memory_ids: list[str] = []
     sequence_num: int = 0
+
+    # Priority 2: Code Grounding (Memory → Code linking)
+    code_references: list[CodeReference] = []  # Links to specific code locations
+    stale: bool = False  # True if code references are invalid
+    stale_reason: str | None = None  # Explanation of why memory is stale
+
+    # Priority 3: Hierarchical Tiers (Working → Recent → Archive)
+    tier: MemoryTier = MemoryTier.SHORT_TERM  # Current memory tier
+    access_frequency: int = 0  # For hotness calculation (different from access_count)
 
     # Standard fields
     tags: list[str] = []
@@ -111,6 +198,9 @@ class EnhancedMemoryMetadata(BaseModel):
             "timestamp": self.timestamp.isoformat(),
             "access_count": self.access_count,
             "sequence_num": self.sequence_num,
+            "tier": self.tier.value,
+            "access_frequency": self.access_frequency,
+            "stale": self.stale,
         }
 
         if self.session_id:
@@ -136,12 +226,28 @@ class EnhancedMemoryMetadata(BaseModel):
         if self.decay_counter is not None:
             metadata_dict["decay_counter"] = self.decay_counter
         metadata_dict["memory_strength"] = self.memory_strength
+        if self.stale_reason:
+            metadata_dict["stale_reason"] = self.stale_reason
+        if self.code_references:
+            import json
+            metadata_dict["code_references"] = json.dumps([ref.to_dict() for ref in self.code_references])
 
         return metadata_dict
 
     @classmethod
     def from_chromadb_dict(cls, metadata: dict[str, Any]) -> EnhancedMemoryMetadata:
         """Create from ChromaDB metadata dictionary."""
+        import json
+
+        # Parse code references from JSON string
+        code_refs_list: list[CodeReference] = []
+        if metadata.get("code_references"):
+            try:
+                refs_data: list[dict[str, Any]] = json.loads(metadata["code_references"])
+                code_refs_list = [CodeReference.from_dict(ref) for ref in refs_data]
+            except (json.JSONDecodeError, KeyError):
+                pass  # Handle gracefully if JSON parsing fails
+
         return cls(
             memory_type=metadata.get("memory_type", "episodic"),
             importance=float(metadata.get("importance", 0.5)),
@@ -161,6 +267,11 @@ class EnhancedMemoryMetadata(BaseModel):
             short_id=metadata.get("short_id"),
             decay_counter=int(metadata["decay_counter"]) if metadata.get("decay_counter") is not None else None,
             memory_strength=float(metadata.get("memory_strength", 1.0)),
+            code_references=code_refs_list,
+            stale=bool(metadata.get("stale", False)),
+            stale_reason=metadata.get("stale_reason"),
+            tier=MemoryTier(metadata.get("tier", "short_term")),
+            access_frequency=int(metadata.get("access_frequency", 0)),
         )
 
 

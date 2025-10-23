@@ -15,6 +15,8 @@ from neuralmemory.core.exceptions import (
     BatchValidationError
 )
 from neuralmemory.core.models import (
+    MemoryTier,
+    CodeReference,
     EnhancedMemoryMetadata,
     SessionMetadata,
     SearchResult,
@@ -39,7 +41,11 @@ class NeuralVector:
         enable_session_tracking: bool = True,
         enable_contextual_embeddings: bool = True,
         enable_biological_decay: bool = True,
-        conflict_similarity_threshold: float = 0.93
+        conflict_similarity_threshold: float = 0.93,
+        enable_hybrid_retrieval: bool = True,
+        enable_code_grounding: bool = True,
+        max_working_memory_size: int = 20,
+        short_term_days: int = 7
     ) -> None:
         self._db_path: Path = Path(db_path)
         self._client: chromadb.PersistentClient | None = None
@@ -62,12 +68,29 @@ class NeuralVector:
         self._enable_biological_decay: bool = enable_biological_decay
         self._conflict_similarity_threshold: float = conflict_similarity_threshold
 
+        # Phase 4 Priority 1: Hybrid Retrieval (Multi-Index)
+        self._enable_hybrid_retrieval: bool = enable_hybrid_retrieval
+        self._bm25_corpus: list[str] = []  # Documents for BM25
+        self._bm25_ids: list[str] = []  # Corresponding memory IDs
+        self._entity_index: dict[str, list[str]] = {}  # entity -> list of memory_ids
+        self._temporal_index: dict[str, list[str]] = {}  # date_key -> list of memory_ids
+
+        # Phase 4 Priority 2: Code Grounding
+        self._enable_code_grounding: bool = enable_code_grounding
+
+        # Phase 4 Priority 3: Hierarchical Tiers
+        self._working_memory: dict[str, MemoryResult] = {}  # memory_id -> MemoryResult
+        self._max_working_memory_size: int = max_working_memory_size
+        self._short_term_days: int = short_term_days
+
         log_path: Path = Path(__file__).parent / "logs" / "neuralvector.log"
         self._logger: logging.Logger = LoggerSetup.get_logger("NeuralVector", log_path)
         self._logger.info(f"Initializing NeuralVector with database path: {db_path}")
+        self._logger.info(f"Phase 4 - Hybrid:{enable_hybrid_retrieval} Grounding:{enable_code_grounding} MaxWorking:{max_working_memory_size}")
 
         self._initialize_components()
         self._load_sessions()
+        self._initialize_indices()
     
     def _initialize_components(self) -> None:
         self._initialize_database()
@@ -2462,4 +2485,523 @@ class NeuralVector:
         except Exception as e:
             self._logger.error(f"Import failed: {e}")
             raise VectorDatabaseError(f"Import failed: {e}")
+
+
+    # ==================== PHASE 4: PRIORITY 1 - HYBRID RETRIEVAL ====================
+
+    def _initialize_indices(self) -> None:
+        """Initialize BM25, entity, and temporal indices from existing memories."""
+        if not self._enable_hybrid_retrieval:
+            self._logger.info("Hybrid retrieval disabled, skipping index initialization")
+            return
+
+        self._logger.info("Initializing hybrid retrieval indices...")
+
+        try:
+            # Retrieve all memories to build indices
+            results = self._collection.get(
+                include=["documents", "metadatas"]
+            )
+
+            if not results or not results.get("ids"):
+                self._logger.info("No existing memories to index")
+                return
+
+            # Build BM25 corpus
+            for idx, (memory_id, document) in enumerate(zip(results["ids"], results["documents"])):
+                self._bm25_corpus.append(document)
+                self._bm25_ids.append(memory_id)
+
+            # Build entity index
+            for memory_id, metadata in zip(results["ids"], results["metadatas"]):
+                entities_str: str = metadata.get("entities", "")
+                if entities_str:
+                    entities: list[str] = entities_str.split(",")
+                    for entity in entities:
+                        entity = entity.strip().lower()
+                        if entity:
+                            if entity not in self._entity_index:
+                                self._entity_index[entity] = []
+                            self._entity_index[entity].append(memory_id)
+
+            # Build temporal index (group by date)
+            for memory_id, metadata in zip(results["ids"], results["metadatas"]):
+                timestamp_str: str = metadata.get("timestamp")
+                if timestamp_str:
+                    try:
+                        dt: datetime = datetime.fromisoformat(timestamp_str)
+                        date_key: str = dt.strftime("%Y-%m-%d")
+                        if date_key not in self._temporal_index:
+                            self._temporal_index[date_key] = []
+                        self._temporal_index[date_key].append(memory_id)
+                    except (ValueError, AttributeError):
+                        pass
+
+            self._logger.info(
+                f"Indices initialized: BM25={len(self._bm25_corpus)}, "
+                f"Entities={len(self._entity_index)}, Dates={len(self._temporal_index)}"
+            )
+
+        except Exception as e:
+            self._logger.error(f"Failed to initialize indices: {e}")
+
+    def _add_to_indices(self, memory_id: str, content: str, metadata: EnhancedMemoryMetadata) -> None:
+        """Add a new memory to all indices."""
+        if not self._enable_hybrid_retrieval:
+            return
+
+        # Add to BM25
+        self._bm25_corpus.append(content)
+        self._bm25_ids.append(memory_id)
+
+        # Add to entity index
+        for entity in metadata.entities:
+            entity_lower: str = entity.lower()
+            if entity_lower not in self._entity_index:
+                self._entity_index[entity_lower] = []
+            self._entity_index[entity_lower].append(memory_id)
+
+        # Add to temporal index
+        date_key: str = metadata.timestamp.strftime("%Y-%m-%d")
+        if date_key not in self._temporal_index:
+            self._temporal_index[date_key] = []
+        self._temporal_index[date_key].append(memory_id)
+
+    def _search_bm25(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        """Search using BM25 keyword matching. Returns list of (memory_id, score) tuples."""
+        if not self._bm25_corpus:
+            return []
+
+        try:
+            from rank_bm25 import BM25Okapi
+            
+            # Tokenize corpus and query
+            tokenized_corpus: list[list[str]] = [doc.lower().split() for doc in self._bm25_corpus]
+            tokenized_query: list[str] = query.lower().split()
+
+            # Create BM25 index and search
+            bm25 = BM25Okapi(tokenized_corpus)
+            scores: list[float] = bm25.get_scores(tokenized_query)
+
+            # Get top k results
+            results: list[tuple[str, float]] = [
+                (self._bm25_ids[i], scores[i]) 
+                for i in range(len(scores))
+            ]
+            results.sort(key=lambda x: x[1], reverse=True)
+
+            return results[:top_k]
+
+        except ImportError:
+            self._logger.warning("rank_bm25 not installed, BM25 search unavailable")
+            return []
+        except Exception as e:
+            self._logger.error(f"BM25 search failed: {e}")
+            return []
+
+    def _search_entity_index(self, entities: list[str]) -> list[str]:
+        """Search entity index for memories containing specified entities."""
+        memory_ids: set[str] = set()
+
+        for entity in entities:
+            entity_lower: str = entity.lower()
+            if entity_lower in self._entity_index:
+                memory_ids.update(self._entity_index[entity_lower])
+
+        return list(memory_ids)
+
+    def _search_temporal_index(self, start_date: datetime | None = None, end_date: datetime | None = None, last_days: int | None = None) -> list[str]:
+        """Search temporal index for memories within date range."""
+        if last_days:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=last_days)
+
+        if not start_date or not end_date:
+            return []
+
+        memory_ids: set[str] = set()
+        current_date: datetime = start_date
+
+        while current_date <= end_date:
+            date_key: str = current_date.strftime("%Y-%m-%d")
+            if date_key in self._temporal_index:
+                memory_ids.update(self._temporal_index[date_key])
+            current_date += timedelta(days=1)
+
+        return list(memory_ids)
+
+    def hybrid_search(self, query: str, n_results: int = 5, importance_weight: float = 0.2, recency_weight: float = 0.1) -> list[SearchResult]:
+        """
+        Hybrid search combining BM25 keyword matching, semantic vector search, and metadata signals.
+        
+        Returns semantically relevant results boosted by importance and recency.
+        """
+        if not self._enable_hybrid_retrieval:
+            return self.retrieve_memory(query, n_results)
+
+        self._logger.info(f"Hybrid search: '{query[:50]}...'")
+
+        # Step 1: Get BM25 results
+        bm25_results: list[tuple[str, float]] = self._search_bm25(query, top_k=n_results * 3)
+        bm25_scores: dict[str, float] = {mem_id: score for mem_id, score in bm25_results}
+
+        # Step 2: Get semantic search results (fetch 2x for filtering)
+        semantic_results: list[SearchResult] = self.retrieve_memory(query, n_results * 2)
+
+        # Step 3: Combine scores
+        combined_scores: list[tuple[SearchResult, float]] = []
+
+        for result in semantic_results:
+            memory_id: str = result.memory_id or ""
+
+            # Base score from reranker
+            score: float = result.rerank_score
+
+            # Add BM25 boost (normalize BM25 to 0-1 range)
+            if memory_id in bm25_scores:
+                bm25_normalized: float = min(1.0, bm25_scores[memory_id] / 10.0)
+                score += 0.3 * bm25_normalized
+
+            # Add importance boost
+            if result.enhanced_metadata:
+                score += importance_weight * result.enhanced_metadata.importance
+
+                # Add recency boost (last 7 days)
+                days_old: int = (datetime.now() - result.enhanced_metadata.timestamp).days
+                if days_old < 7:
+                    recency_boost: float = (7 - days_old) / 7.0
+                    score += recency_weight * recency_boost
+
+            combined_scores.append((result, score))
+
+        # Sort by combined score
+        combined_scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Update ranks and return top N
+        final_results: list[SearchResult] = []
+        for rank, (result, combined_score) in enumerate(combined_scores[:n_results], start=1):
+            final_results.append(
+                SearchResult(
+                    rank=rank,
+                    content=result.content,
+                    rerank_score=combined_score,
+                    cosine_distance=result.cosine_distance,
+                    metadata=result.metadata,
+                    memory_id=result.memory_id,
+                    short_id=result.short_id,
+                    enhanced_metadata=result.enhanced_metadata
+                )
+            )
+
+        self._logger.info(f"Hybrid search returned {len(final_results)} results with combined scoring")
+        return final_results
+
+    # ==================== PHASE 4: PRIORITY 2 - CODE GROUNDING ====================
+
+    def _extract_code_references(self, content: str) -> list[CodeReference]:
+        """Extract code references from memory content using regex patterns."""
+        if not self._enable_code_grounding:
+            return []
+
+        references: list[CodeReference] = []
+
+        # Pattern for file paths (e.g., /path/to/file.py, vector_db.py)
+        file_pattern = r'(?:^|[\s\(])([/\w]+/[\w/.]+\.py|[\w_]+\.py)'
+
+        # Pattern for function names (e.g., def function_name, function_name())
+        function_pattern = r'def\s+(\w+)|(\w+)\(\)'
+
+        # Pattern for class names (e.g., class ClassName)
+        class_pattern = r'class\s+(\w+)'
+
+        # Extract file paths
+        for match in re.finditer(file_pattern, content):
+            file_path: str = match.group(1)
+            # Try to make absolute path
+            if not file_path.startswith('/'):
+                # Relative path - could be in project
+                project_root: Path = Path.cwd()
+                absolute_path: Path = project_root / file_path
+                if absolute_path.exists():
+                    file_path = str(absolute_path)
+
+            references.append(
+                CodeReference(
+                    file_path=file_path,
+                    last_validated=datetime.now()
+                )
+            )
+
+        # Extract function names with file context
+        for match in re.finditer(function_pattern, content):
+            func_name: str = match.group(1) or match.group(2)
+            if func_name and len(references) > 0:
+                # Associate with last found file
+                last_ref: CodeReference = references[-1]
+                references[-1] = CodeReference(
+                    file_path=last_ref.file_path,
+                    function_name=func_name,
+                    last_validated=datetime.now()
+                )
+
+        # Extract class names
+        for match in re.finditer(class_pattern, content):
+            class_name: str = match.group(1)
+            if class_name and len(references) > 0:
+                last_ref: CodeReference = references[-1]
+                references[-1] = CodeReference(
+                    file_path=last_ref.file_path,
+                    class_name=class_name,
+                    last_validated=datetime.now()
+                )
+
+        self._logger.debug(f"Extracted {len(references)} code references from content")
+        return references
+
+    def _validate_code_reference(self, ref: CodeReference) -> tuple[bool, str | None]:
+        """
+        Validate a code reference, checking if file/function/class still exists.
+        Returns (is_valid, stale_reason).
+        """
+        import ast
+        import os
+
+        # Check file exists
+        if not os.path.exists(ref.file_path):
+            return False, f"File not found: {ref.file_path}"
+
+        # If only file reference, it's valid
+        if not ref.function_name and not ref.class_name:
+            return True, None
+
+        # Parse file with AST to find functions/classes
+        try:
+            with open(ref.file_path, 'r') as f:
+                tree: ast.AST = ast.parse(f.read())
+
+            # Find all function and class definitions
+            functions: set[str] = set()
+            classes: set[str] = set()
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    functions.add(node.name)
+                elif isinstance(node, ast.ClassDef):
+                    classes.add(node.name)
+
+            # Check function exists
+            if ref.function_name and ref.function_name not in functions:
+                return False, f"Function '{ref.function_name}' not found in {ref.file_path}"
+
+            # Check class exists
+            if ref.class_name and ref.class_name not in classes:
+                return False, f"Class '{ref.class_name}' not found in {ref.file_path}"
+
+            return True, None
+
+        except (SyntaxError, UnicodeDecodeError) as e:
+            self._logger.warning(f"Could not parse {ref.file_path}: {e}")
+            return True, None  # Assume valid if can't parse
+
+    def validate_memory_code_references(self, memory_id: str) -> tuple[bool, str | None]:
+        """
+        Validate all code references for a memory.
+        Returns (all_valid, stale_reason).
+        """
+        if not self._enable_code_grounding:
+            return True, None
+
+        # Get memory metadata
+        result = self._collection.get(
+            ids=[memory_id],
+            include=["metadatas"]
+        )
+
+        if not result or not result.get("ids"):
+            return True, None
+
+        metadata_dict: dict[str, Any] = result["metadatas"][0]
+        metadata: EnhancedMemoryMetadata = EnhancedMemoryMetadata.from_chromadb_dict(metadata_dict)
+
+        # Validate each code reference
+        for ref in metadata.code_references:
+            is_valid, reason = self._validate_code_reference(ref)
+            if not is_valid:
+                return False, reason
+
+        return True, None
+
+    # ==================== PHASE 4: PRIORITY 3 - HIERARCHICAL TIERS ====================
+
+    def promote_to_working_memory(self, memory_id: str) -> None:
+        """Promote a memory to working memory (Tier 1) for fast O(1) access."""
+        if memory_id in self._working_memory:
+            return
+
+        # Fetch memory if not in working memory
+        memory: MemoryResult = self.read_memory(memory_id)
+
+        # Evict oldest if at capacity (LRU)
+        if len(self._working_memory) >= self._max_working_memory_size:
+            # Remove first item (oldest)
+            oldest_id: str = next(iter(self._working_memory))
+            del self._working_memory[oldest_id]
+            self._logger.debug(f"Evicted {oldest_id[:8]}... from working memory (LRU)")
+
+        # Add to working memory
+        self._working_memory[memory_id] = memory
+        self._logger.debug(f"Promoted {memory_id[:8]}... to working memory")
+
+    def clear_working_memory(self) -> None:
+        """Clear all working memory (typically at session end)."""
+        count: int = len(self._working_memory)
+        self._working_memory.clear()
+        self._logger.info(f"Cleared {count} memories from working memory")
+
+    def get_working_memory(self) -> list[MemoryResult]:
+        """Get all memories currently in working memory."""
+        return list(self._working_memory.values())
+
+    def tier_aware_retrieve(self, query: str, n_results: int = 5) -> list[SearchResult]:
+        """
+        Tier-aware retrieval checking working memory first, then semantic search.
+        
+        Priority:
+        1. Check working memory for cached results (0s latency)
+        2. Fall back to semantic search (16s latency)
+        3. Promote frequently accessed to working memory
+        """
+        # Check working memory first for query match
+        working_mem_results: list[SearchResult] = []
+        for mem_id, mem_result in self._working_memory.items():
+            # Simple keyword matching for working memory
+            if any(keyword.lower() in mem_result.content.lower() for keyword in query.lower().split()):
+                working_mem_results.append(
+                    SearchResult(
+                        rank=len(working_mem_results) + 1,
+                        content=mem_result.content,
+                        rerank_score=0.95,  # High score for working memory hits
+                        cosine_distance=0.0,
+                        metadata=mem_result.metadata,
+                        memory_id=mem_result.memory_id,
+                        short_id=mem_result.short_id,
+                        enhanced_metadata=mem_result.enhanced_metadata
+                    )
+                )
+
+        if working_mem_results:
+            self._logger.info(f"Found {len(working_mem_results)} results in working memory (0s latency)")
+            return working_mem_results[:n_results]
+
+        # Not in working memory, use hybrid search
+        results: list[SearchResult] = self.hybrid_search(query, n_results)
+
+        # Promote hot memories to working memory
+        for result in results:
+            if result.enhanced_metadata and result.enhanced_metadata.access_frequency >= 3:
+                if result.memory_id:
+                    self.promote_to_working_memory(result.memory_id)
+
+        return results
+
+    def calculate_memory_hotness(self, metadata: EnhancedMemoryMetadata) -> float:
+        """
+        Calculate hotness score for tier assignment.
+        Hotness = access_frequency * recency_weight
+        """
+        # Access frequency component
+        frequency_score: float = min(1.0, metadata.access_frequency / 10.0)
+
+        # Recency component
+        days_old: int = (datetime.now() - metadata.timestamp).days
+        if days_old < 7:
+            recency_score: float = (7 - days_old) / 7.0
+        else:
+            recency_score = 0.1
+
+        # Combined hotness
+        hotness: float = (0.7 * frequency_score) + (0.3 * recency_score)
+
+        return hotness
+
+    def tier_memories_by_age(self) -> dict[str, int]:
+        """
+        Tier memories based on age and access patterns.
+        Moves old/cold memories to ARCHIVE tier.
+        Returns statistics.
+        """
+        results = self._collection.get(include=["metadatas"])
+
+        if not results or not results.get("ids"):
+            return {"total": 0, "archived": 0, "short_term": 0, "working": 0}
+
+        stats: dict[str, int] = {"total": 0, "archived": 0, "short_term": 0, "working": 0}
+        updated_ids: list[str] = []
+        updated_metadatas: list[dict[str, Any]] = []
+
+        for memory_id, metadata_dict in zip(results["ids"], results["metadatas"]):
+            stats["total"] += 1
+            metadata: EnhancedMemoryMetadata = EnhancedMemoryMetadata.from_chromadb_dict(metadata_dict)
+
+            # Calculate age
+            days_old: int = (datetime.now() - metadata.timestamp).days
+
+            # Determine new tier
+            new_tier: MemoryTier = metadata.tier
+
+            # Archive old, cold memories
+            if days_old > self._short_term_days and metadata.importance < 0.9:
+                hotness: float = self.calculate_memory_hotness(metadata)
+                if hotness < 0.3:  # Cold memory
+                    new_tier = MemoryTier.ARCHIVE
+                    stats["archived"] += 1
+
+            # Keep hot or important in short-term
+            elif days_old <= self._short_term_days or metadata.importance >= 0.9:
+                new_tier = MemoryTier.SHORT_TERM
+                stats["short_term"] += 1
+
+            # Update if tier changed
+            if new_tier != metadata.tier:
+                from pydantic import create_model
+                # Create new metadata with updated tier
+                new_metadata = EnhancedMemoryMetadata(
+                    memory_type=metadata.memory_type,
+                    importance=metadata.importance,
+                    session_id=metadata.session_id,
+                    project=metadata.project,
+                    entities=metadata.entities,
+                    topics=metadata.topics,
+                    action_items=metadata.action_items,
+                    outcome=metadata.outcome,
+                    access_count=metadata.access_count,
+                    last_accessed=metadata.last_accessed,
+                    decay_counter=metadata.decay_counter,
+                    memory_strength=metadata.memory_strength,
+                    parent_memory_id=metadata.parent_memory_id,
+                    related_memory_ids=metadata.related_memory_ids,
+                    sequence_num=metadata.sequence_num,
+                    code_references=metadata.code_references,
+                    stale=metadata.stale,
+                    stale_reason=metadata.stale_reason,
+                    tier=new_tier,
+                    access_frequency=metadata.access_frequency,
+                    tags=metadata.tags,
+                    timestamp=metadata.timestamp,
+                    short_id=metadata.short_id
+                )
+
+                updated_ids.append(memory_id)
+                updated_metadatas.append(new_metadata.to_chromadb_dict())
+
+        # Batch update
+        if updated_ids:
+            self._collection.update(
+                ids=updated_ids,
+                metadatas=updated_metadatas
+            )
+            self._logger.info(f"Tiered {len(updated_ids)} memories: {stats}")
+
+        stats["working"] = len(self._working_memory)
+        return stats
 
