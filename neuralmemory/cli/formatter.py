@@ -1,7 +1,8 @@
 from __future__ import annotations
 from datetime import datetime
+from typing import Any
 
-from neuralmemory.core.models import SearchResult, StorageResult, MemoryResult
+from neuralmemory.core.models import SearchResult, StorageResult, MemoryResult, SessionMetadata
 
 
 class MemoryFormatter:
@@ -128,3 +129,181 @@ class MemoryFormatter:
             identifier: str = result.short_id if result.short_id else result.memory_id[:8]
             lines.append(f"  {idx + 1}. [{identifier}] - {len(result.content)} chars")
         return "\n".join(lines)
+
+    # Session-related formatting methods
+    def format_session_header(self) -> str:
+        return (
+            f"NEURAL MEMORY SESSION\n"
+            f"{'-' * 60}"
+        )
+
+    def format_session_created(self, session_id: str, name: str | None) -> str:
+        identifier: str = name if name else session_id[:8]
+        return (
+            f"{self.format_session_header()}\n"
+            f"[SUCCESS] Started new session: {identifier}\n"
+            f"Session ID: {session_id}"
+        )
+
+    def format_session_list(self, sessions: dict[str, SessionMetadata]) -> str:
+        if not sessions:
+            return f"{self.format_session_header()}\n[INFO] No sessions found"
+
+        lines: list[str] = [
+            self.format_session_header(),
+            f"Total sessions: {len(sessions)}\n"
+        ]
+
+        for session_id, session in sessions.items():
+            identifier: str = session.name if session.name else session_id[:8]
+            created: str = session.created_at.strftime("%d/%m/%Y %I:%M %p")
+            last_activity: str = session.last_activity.strftime("%d/%m/%Y %I:%M %p")
+            participants_str: str = ", ".join(session.participants) if session.participants else "None"
+
+            lines.append(
+                f"Session: {identifier}\n"
+                f"  Status: {session.status}\n"
+                f"  Memories: {session.total_memories}\n"
+                f"  Avg Importance: {session.avg_importance:.2f}\n"
+                f"  Created: {created}\n"
+                f"  Last Activity: {last_activity}\n"
+                f"  Project: {session.project if session.project else 'None'}\n"
+                f"  Topic: {session.topic if session.topic else 'None'}\n"
+                f"  Participants: {participants_str}\n"
+                f"  {'-' * 50}"
+            )
+
+        return "\n".join(lines)
+
+    def format_session_details(self, session: SessionMetadata) -> str:
+        identifier: str = session.name if session.name else session.session_id[:8]
+        created: str = session.created_at.strftime("%d/%m/%Y %I:%M %p")
+        last_activity: str = session.last_activity.strftime("%d/%m/%Y %I:%M %p")
+        participants_str: str = ", ".join(session.participants) if session.participants else "None"
+
+        return (
+            f"{self.format_session_header()}\n"
+            f"Session: {identifier}\n"
+            f"Session ID: {session.session_id}\n"
+            f"Name: {session.name if session.name else 'None'}\n"
+            f"Status: {session.status}\n"
+            f"Project: {session.project if session.project else 'None'}\n"
+            f"Topic: {session.topic if session.topic else 'None'}\n"
+            f"Participants: {participants_str}\n"
+            f"Created: {created}\n"
+            f"Last Activity: {last_activity}\n"
+            f"Total Memories: {session.total_memories}\n"
+            f"Average Importance: {session.avg_importance:.2f}"
+        )
+
+    def format_session_stats(self, stats: dict[str, Any]) -> str:
+        if not stats:
+            return f"{self.format_session_header()}\n[INFO] No statistics available"
+
+        lines: list[str] = [
+            self.format_session_header(),
+            f"Session Statistics\n"
+        ]
+
+        if "session_name" in stats:
+            identifier: str = stats["session_name"] if stats["session_name"] else stats.get("session_id", "")[:8]
+            lines.append(f"Session: {identifier}")
+
+        lines.append(f"Total Memories: {stats.get('total_memories', 0)}")
+        lines.append(f"Average Importance: {stats.get('avg_importance', 0.0):.2f}")
+        lines.append(f"Duration: {stats.get('duration', 'N/A')}")
+
+        # Topic distribution
+        if "topic_distribution" in stats and stats["topic_distribution"]:
+            lines.append(f"\nTop Topics:")
+            for topic, count in list(stats["topic_distribution"].items())[:5]:
+                lines.append(f"  {topic}: {count}")
+
+        # Entity participation
+        if "entity_participation" in stats and stats["entity_participation"]:
+            lines.append(f"\nEntity Participation:")
+            for entity, count in stats["entity_participation"].items():
+                lines.append(f"  {entity}: {count}")
+
+        # Memory type distribution
+        if "memory_type_distribution" in stats and stats["memory_type_distribution"]:
+            lines.append(f"\nMemory Types:")
+            for mem_type, count in stats["memory_type_distribution"].items():
+                lines.append(f"  {mem_type}: {count}")
+
+        # Action items
+        if "action_items_total" in stats:
+            lines.append(f"\nAction Items:")
+            lines.append(f"  Total: {stats['action_items_total']}")
+            lines.append(f"  Completed: {stats.get('action_items_completed', 0)}")
+            lines.append(f"  Completion Ratio: {stats.get('completion_ratio', 0.0):.1%}")
+
+        return "\n".join(lines)
+
+    def format_conversation_thread(self, thread: list[MemoryResult]) -> str:
+        if not thread:
+            return f"{self.format_session_header()}\n[INFO] No conversation thread found"
+
+        lines: list[str] = [
+            self.format_session_header(),
+            f"Conversation Thread ({len(thread)} memories)\n"
+        ]
+
+        for idx, memory in enumerate(thread, 1):
+            identifier: str = memory.short_id if memory.short_id else memory.memory_id[:8]
+            timestamp: str = memory.timestamp.strftime("%d/%m/%Y %I:%M %p")
+            content_preview: str = memory.content[:100] + "..." if len(memory.content) > 100 else memory.content
+
+            lines.append(
+                f"{idx}. [{identifier}] - {timestamp}\n"
+                f"   {content_preview}\n"
+            )
+
+        return "\n".join(lines)
+
+    def format_context_window(self, context: dict[str, list[MemoryResult]]) -> str:
+        lines: list[str] = [self.format_session_header()]
+
+        # Before memories
+        before: list[MemoryResult] = context.get("before", [])
+        if before:
+            lines.append(f"\nContext Before ({len(before)} memories):")
+            for memory in before:
+                identifier: str = memory.short_id if memory.short_id else memory.memory_id[:8]
+                timestamp: str = memory.timestamp.strftime("%d/%m/%Y %I:%M %p")
+                content_preview: str = memory.content[:80] + "..." if len(memory.content) > 80 else memory.content
+                lines.append(f"  [{identifier}] {timestamp}: {content_preview}")
+
+        # Target memory
+        target: list[MemoryResult] = context.get("target", [])
+        if target:
+            lines.append(f"\n{'=' * 60}")
+            lines.append("TARGET MEMORY:")
+            lines.append(f"{'=' * 60}")
+            for memory in target:
+                lines.append(self.format_memory_result(memory))
+
+        # After memories
+        after: list[MemoryResult] = context.get("after", [])
+        if after:
+            lines.append(f"\nContext After ({len(after)} memories):")
+            for memory in after:
+                identifier: str = memory.short_id if memory.short_id else memory.memory_id[:8]
+                timestamp: str = memory.timestamp.strftime("%d/%m/%Y %I:%M %p")
+                content_preview: str = memory.content[:80] + "..." if len(memory.content) > 80 else memory.content
+                lines.append(f"  [{identifier}] {timestamp}: {content_preview}")
+
+        return "\n".join(lines)
+
+    def format_session_ended(self, summary: str | None) -> str:
+        if summary:
+            return (
+                f"{self.format_session_header()}\n"
+                f"[SUCCESS] Session ended with summary\n\n"
+                f"Summary:\n{summary}"
+            )
+        else:
+            return (
+                f"{self.format_session_header()}\n"
+                f"[SUCCESS] Session ended (no summary generated)"
+            )

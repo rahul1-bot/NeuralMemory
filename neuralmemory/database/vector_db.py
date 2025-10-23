@@ -357,14 +357,6 @@ class NeuralVector:
 
         return list(set(topics))  # Remove duplicates
 
-    def start_new_session(self, session_id: str | None = None) -> str:
-        """Start a new conversation session for threading memories."""
-        import uuid
-        self._current_session_id = session_id if session_id else str(uuid.uuid4())
-        self._session_sequence_num = 0
-        self._logger.info(f"Started new session: {self._current_session_id}")
-        return self._current_session_id
-
     def get_current_session_id(self) -> str | None:
         """Get the current session ID."""
         return self._current_session_id
