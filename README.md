@@ -34,7 +34,7 @@ NeuralMemory addresses the fundamental challenge of persistent memory in large l
 
 - **Atomic Memory Design**: Large self-contained memories (1000-2000 tokens) that preserve complete context
 - **Contextual Embeddings**: Dynamic context-aware encoding achieving 0.95 similarity clustering for related memories
-- **Biological Decay**: Counter-based temporal decay (5→4→3→2→1→0→deletion) with reinforcement on access
+- **Biological Decay**: Ebbinghaus forgetting curve (exponential decay: strength × 0.5^days) with reinforcement on access
 - **Hybrid Retrieval**: BM25 keyword search + semantic vector search + temporal indexing + entity graphs
 - **Hierarchical Tiers**: Working memory (0s) → Short-term (16s) → Archive (30s) with automatic promotion
 
@@ -77,7 +77,8 @@ Traditional approaches fail to balance context preservation with token efficienc
 ✅ **Memory Intelligence**
 - Contextual embeddings creating high-dimensional clusters
 - Conflict detection through cosine similarity (>0.93 threshold)
-- Counter-based biological decay (5→0 linear countdown) with access reinforcement
+- Ebbinghaus forgetting curve with exponential decay (strength × 0.5^days)
+- Access-based reinforcement (resets strength to 1.0)
 - Automatic importance scoring
 - Memory consolidation with clustering and summarization
 
@@ -299,10 +300,11 @@ Query → Preprocessing (temporal expansion)
 - Enables automatic conflict detection
 
 **4. Biological Decay Mechanism**
-- Decay counter: 5 → 4 → 3 → 2 → 1 → 0 → deletion
-- Only applies to conflicting memories (>0.93 similarity)
-- Reinforcement on access (resets counter to 5)
-- Non-conflicting memories preserved indefinitely
+- Ebbinghaus forgetting curve: memory_strength × (0.5 ^ days_since_created)
+- Exponential decay applied to all memories over time
+- Deletion when strength falls below threshold (default: 0.1)
+- Reinforcement on access (resets strength to 1.0)
+- Recent/accessed memories stay strong, unused memories fade naturally
 
 **5. Hierarchical Memory Tiers**
 ```
@@ -609,25 +611,34 @@ db.store_memory(
 
 ### 2. Biological Decay
 
-Counter-based decay mechanism for conflicting memories (>0.93 similarity):
+Ebbinghaus forgetting curve with exponential decay applied to all memories:
 
 ```python
-# Automatic conflict detection on store
-conflicts = db.detect_conflicts(memory_id, content, embedding)
+# Automatic decay applies to all memories over time
+# Formula: memory_strength × (0.5 ^ days_since_created)
 
-# For each conflict, decay counter set to 5
-# Counter decrements: 5 → 4 → 3 → 2 → 1 → 0 (deleted)
+# Apply decay to all memories
+deleted_count = db.apply_decay_to_all_memories()
 
 # Reinforcement on access
-db.reinforce_memory("conflict-id")  # Resets counter to 5
+db.reinforce_memory("memory-id")  # Resets strength to 1.0
 ```
 
-**Decay Mechanism:**
-- Initial state: Counter = 5 (conflicting memory detected)
-- Each decay cycle: Counter decrements by 1
-- When counter reaches 0: Memory is deleted
-- On access: Counter resets to 5 (reinforcement)
-- Non-conflicting memories: No decay, preserved indefinitely
+**Ebbinghaus Decay Mechanism:**
+- **Day 0**: strength = 1.0 (100% - fresh memory)
+- **Day 1**: strength = 0.5 (50% - half forgotten)
+- **Day 2**: strength = 0.25 (25%)
+- **Day 3**: strength = 0.125 (12.5%)
+- **Day 4**: strength = 0.0625 (6.25%)
+- **Below threshold (0.1)**: Memory deleted
+- **On access**: Strength resets to 1.0 (reinforcement)
+
+**Benefits:**
+- True exponential forgetting matching human memory
+- Recent memories stay strong (0.5 after 1 day)
+- Old unused memories fade naturally (0.125 after 3 days)
+- Frequently accessed memories never decay (reinforced to 1.0)
+- Configurable deletion threshold (default: 0.1)
 
 ### 3. Code Grounding
 

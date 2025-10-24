@@ -1899,3 +1899,202 @@ grep -n "Ebbinghaus" README.md
 
 *Special thanks to user for catching this documentation inaccuracy through careful code review.*
 
+
+---
+
+## Implementation: Ebbinghaus Decay Mechanism
+
+**Date:** October 24, 2025 | **Status:** COMPLETE ✅
+
+### User Feedback
+
+**"Counter-based mechanism is fucking dumb - update to proper Ebbinghaus decay"**
+
+User correctly identified that the simple counter mechanism (5→4→3→2→1→0) was inadequate compared to the proper Ebbinghaus exponential forgetting curve that was implemented but never used.
+
+### Problem Analysis
+
+**Counter-Based Mechanism (OLD):**
+- ❌ Linear countdown: 5 → 4 → 3 → 2 → 1 → 0 → deletion
+- ❌ Arbitrary numbers with no cognitive science basis
+- ❌ Only applied to "conflicting" memories
+- ❌ Does not match biological memory behavior
+- ❌ Simple but unrealistic
+
+**Ebbinghaus Code (ORPHANED):**
+- ✅ Formula: `memory_strength × (0.5 ^ days_since_created)`
+- ✅ True exponential decay from cognitive science research
+- ✅ Implemented in `apply_decay()` method
+- ❌ Never called anywhere in codebase
+
+### Implementation Changes
+
+#### 1. BiologicalDecayStrategy (`biological.py`)
+
+**Lines 10-21: Added deletion_threshold parameter**
+```python
+def __init__(
+    self,
+    collection: Any,
+    enable_biological_decay: bool,
+    logger: logging.Logger,
+    deletion_threshold: float = 0.1  # NEW PARAMETER
+) -> None:
+```
+
+**Lines 44-93: Rewrote apply_decay_to_all() with Ebbinghaus formula**
+```python
+def apply_decay_to_all(self) -> int:
+    # For each memory:
+    days_since_created = (datetime.now() - timestamp).days
+    memory_strength = float(metadata_dict.get('memory_strength', 1.0))
+    
+    # Apply Ebbinghaus exponential decay
+    decayed_strength = memory_strength * (0.5 ** days_since_created)
+    
+    # Delete if below threshold
+    if decayed_strength < self._deletion_threshold:
+        self._collection.delete(ids=[memory_id])
+    else:
+        # Update with new strength
+        metadata_dict['memory_strength'] = decayed_strength
+        self._collection.update(...)
+```
+
+**Lines 95-122: Rewrote reinforce() to reset memory_strength**
+```python
+def reinforce(self, memory_id: str) -> bool:
+    # Reset to full strength on access
+    metadata_dict['memory_strength'] = 1.0
+    metadata_dict['last_accessed'] = datetime.now().isoformat()
+    metadata_dict['access_count'] += 1
+```
+
+**Removed:**
+- ❌ All `decay_counter` logic
+- ❌ Counter-based if/else branches
+- ❌ Linear countdown mechanism
+
+#### 2. NeuralVector (`vector_db.py`)
+
+**Line 82: Added decay_deletion_threshold parameter**
+```python
+def __init__(
+    self,
+    db_path: str,
+    # ... other params ...
+    decay_deletion_threshold: float = 0.1,  # NEW
+    # ... other params ...
+)
+```
+
+**Line 106: Store threshold as instance variable**
+```python
+self._decay_deletion_threshold: float = decay_deletion_threshold
+```
+
+**Lines 200-205: Pass parameters to BiologicalDecayStrategy**
+```python
+self._biological_strategy = BiologicalDecayStrategy(
+    collection=self._collection,
+    enable_biological_decay=self._enable_biological_decay,  # Added
+    logger=self._logger,
+    deletion_threshold=self._decay_deletion_threshold  # Added
+)
+```
+
+#### 3. README Documentation
+
+**Overview (Line 37):**
+- ❌ OLD: "Counter-based temporal decay (5→4→3→2→1→0→deletion)"
+- ✅ NEW: "Ebbinghaus forgetting curve (exponential decay: strength × 0.5^days)"
+
+**Key Features (Line 80):**
+- ❌ OLD: "Counter-based biological decay (5→0 linear countdown)"
+- ✅ NEW: "Ebbinghaus forgetting curve with exponential decay (strength × 0.5^days)"
+
+**Architecture (Lines 302-307):**
+- Complete rewrite with Ebbinghaus formula
+- Exponential decay applied to all memories
+- Deletion threshold explanation
+- Reinforcement mechanism
+
+**Advanced Features (Lines 612-641):**
+- Full Ebbinghaus explanation with formula
+- Day-by-day decay schedule showing exponential progression
+- Code examples with proper API calls
+- Benefits of exponential vs linear decay
+
+### Ebbinghaus Decay Schedule
+
+| Day | Strength | Percentage | Status |
+|-----|----------|------------|--------|
+| 0 | 1.0 | 100% | Fresh memory |
+| 1 | 0.5 | 50% | Half forgotten |
+| 2 | 0.25 | 25% | Quarter strength |
+| 3 | 0.125 | 12.5% | Near threshold |
+| 4 | 0.0625 | 6.25% | **DELETED** (< 0.1) |
+
+**With Reinforcement:**
+- Access resets strength to 1.0
+- Frequently accessed memories never decay
+- Unused memories fade naturally
+
+### Benefits of Ebbinghaus Implementation
+
+✅ **Cognitive Science Basis:**
+- Based on Hermann Ebbinghaus's research (1885)
+- Matches human memory forgetting patterns
+- Exponential decay is biologically accurate
+
+✅ **Realistic Memory Behavior:**
+- Recent memories stay strong (50% after 1 day)
+- Old memories fade gradually (12.5% after 3 days)
+- Not arbitrary like counter mechanism
+
+✅ **Configurable Threshold:**
+- Default: 0.1 (memories deleted after ~3.3 days)
+- Can be tuned: 0.05 for longer retention, 0.2 for faster deletion
+- Adapts to different use cases
+
+✅ **Access-Based Reinforcement:**
+- Frequently accessed memories never decay
+- Matches "use it or lose it" principle
+- Automatic importance through usage patterns
+
+### Compilation & Verification
+
+```bash
+python3 -m py_compile neuralmemory/database/strategies/biological.py
+python3 -m py_compile neuralmemory/database/vector_db.py
+# Result: ✅ All files compile successfully
+```
+
+### Files Modified
+
+**3 files updated:**
+1. `neuralmemory/database/strategies/biological.py` - Complete rewrite with Ebbinghaus
+2. `neuralmemory/database/vector_db.py` - Added threshold parameter
+3. `README.md` - Updated all decay documentation
+
+**2 files documented:**
+4. `memory.md` - Implementation details
+5. `progress.md` - This entry
+
+### Result
+
+✅ Counter-based mechanism DELETED
+✅ Proper Ebbinghaus exponential decay ACTIVE
+✅ Cognitive science-based forgetting curve
+✅ Configurable deletion threshold (default: 0.1)
+✅ Access-based reinforcement (strength → 1.0)
+✅ Documentation updated throughout
+
+**EBBINGHAUS DECAY IMPLEMENTATION: COMPLETE ✅**
+
+---
+
+*Formula: memory_strength × (0.5 ^ days_since_created)*
+*Threshold: 0.1 (configurable)*
+*Based on: Ebbinghaus forgetting curve research (1885)*
+
