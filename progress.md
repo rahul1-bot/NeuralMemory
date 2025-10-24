@@ -1024,3 +1024,140 @@ PROJECT EVOLUTION: Started Aug 7 with vector DB, investigated temporal graphs Au
 18. [✅] Update progress.md marking all tasks complete
 19. [✅] Commit all changes with comprehensive message
 20. [✅] Push to remote branch
+## ACTIVE - Architectural Refactoring: Modular Decomposition (Oct 24)
+
+| Progress Todo | Phase 1 Documentation Planning | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [✅] Update memory.md with decomposition planning entries
+2. [✅] Create task breakdown in progress.md for all modules
+3. [ ] Document file mapping from monolith to modules
+4. [ ] Document public API preservation strategy
+
+| Progress Todo | Phase 2A Create Core Module CRUD Operations | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/core/ directory
+2. [ ] Create core/__init__.py with exports
+3. [ ] Extract storage.py with store_memory and related methods
+4. [ ] Extract retrieval.py with read_memory retrieve_memory methods
+5. [ ] Extract deletion.py with delete_memory and soft delete logic
+6. [ ] Extract batch.py with batch_store batch_read batch_update batch_delete
+7. [ ] Compile check all core/ modules
+
+| Progress Todo | Phase 2B Create Indexing Module Search Strategies | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/indexing/ directory
+2. [ ] Create indexing/__init__.py with exports
+3. [ ] Extract bm25.py with BM25 index and search_bm25 method
+4. [ ] Extract entity.py with entity_index and search_entity_index method
+5. [ ] Extract temporal.py with temporal_index and search_temporal_index method
+6. [ ] Extract hybrid.py with hybrid_search orchestrating all indices
+7. [ ] Compile check all indexing/ modules
+
+| Progress Todo | Phase 2C Create Strategies Module Memory Management | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/strategies/ directory
+2. [ ] Create strategies/__init__.py with exports
+3. [ ] Extract contextual.py with encode_with_context detect_conflicts methods
+4. [ ] Extract biological.py with apply_decay reinforce_memory methods
+5. [ ] Extract consolidation.py with consolidate_memories_advanced methods
+6. [ ] Extract filtering.py with filtered_search advanced filtering methods
+7. [ ] Compile check all strategies/ modules
+
+| Progress Todo | Phase 2D Create Cache Module Hierarchical Tiers | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/cache/ directory
+2. [ ] Create cache/__init__.py with exports
+3. [ ] Extract manager.py with working_memory dict and cache orchestration
+4. [ ] Extract tiers.py with tier_aware_retrieve tier assignment logic
+5. [ ] Extract eviction.py with LRU eviction policy promote demote methods
+6. [ ] Extract hotness.py with calculate_memory_hotness tier_memories_by_age
+7. [ ] Compile check all cache/ modules
+
+| Progress Todo | Phase 2E Create Linking Module Code Grounding | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/linking/ directory
+2. [ ] Create linking/__init__.py with exports
+3. [ ] Extract extractor.py with extract_code_references method
+4. [ ] Extract validator.py with validate_code_reference AST parsing
+5. [ ] Extract tracker.py with validate_memory_code_references tracking
+6. [ ] Compile check all linking/ modules
+
+| Progress Todo | Phase 2F Create Sessions Module Lifecycle Management | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/sessions/ directory
+2. [ ] Create sessions/__init__.py with exports
+3. [ ] Extract manager.py with start_new_session list_sessions load_sessions
+4. [ ] Extract metadata.py with session metadata handling persistence
+5. [ ] Extract summarizer.py with end_session generate_session_summary
+6. [ ] Extract relationships.py with add_related_memory get_related_memories
+7. [ ] Compile check all sessions/ modules
+
+| Progress Todo | Phase 2G Create Analytics Module Metrics and Scoring | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/analytics/ directory
+2. [ ] Create analytics/__init__.py with exports
+3. [ ] Extract session_stats.py with get_session_stats analytics methods
+4. [ ] Extract importance.py with calculate_importance auto-scoring
+5. [ ] Extract tags.py with suggest_tags auto-tagging methods
+6. [ ] Compile check all analytics/ modules
+
+| Progress Todo | Phase 2H Create Graph Module Multi-Hop Operations | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/graph/ directory
+2. [ ] Create graph/__init__.py with exports
+3. [ ] Extract multihop.py with multi_hop_search traversal methods
+4. [ ] Extract provenance.py with store_memory_with_provenance tracking
+5. [ ] Extract traversal.py with satisfies_temporal_constraint utilities
+6. [ ] Compile check all graph/ modules
+
+| Progress Todo | Phase 2I Create IO Module Serialization | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Create neuralmemory/database/io/ directory
+2. [ ] Create io/__init__.py with exports
+3. [ ] Extract exporters.py with export_memories to_json methods
+4. [ ] Extract importers.py with import_memories from_json methods
+5. [ ] Compile check all io/ modules
+
+| Progress Todo | Phase 2J Refactor Main Orchestrator | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Refactor vector_db.py to orchestrator class 200-300 lines
+2. [ ] Import all module classes core indexing strategies cache etc
+3. [ ] Delegate all method calls to appropriate modules
+4. [ ] Maintain exact same public API surface
+5. [ ] Keep __init__ signature identical for backwards compatibility
+6. [ ] Compile check vector_db.py orchestrator
+
+| Progress Todo | Phase 2K Update Imports Across Codebase | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Update neuralmemory/database/__init__.py exports
+2. [ ] Update neuralmemory/__init__.py if needed
+3. [ ] Update CLI files if they import directly
+4. [ ] Update test files imports
+5. [ ] Verify no broken imports anywhere
+
+| Progress Todo | Phase 2L Delete Old Monolith | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Verify neuralvector.py not imported anywhere with grep
+2. [ ] Delete neuralvector.py 1,989 line monolith
+3. [ ] Verify deletion doesn't break anything
+
+| Progress Todo | Phase 3 Comprehensive Testing | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Compile all 27 new modules with py_compile
+2. [ ] Test CRUD store_memory read_memory update_memory delete_memory
+3. [ ] Test batch operations batch_store batch_read batch_update batch_delete
+4. [ ] Test semantic search retrieve_memory
+5. [ ] Test hybrid search BM25 entity temporal indices
+6. [ ] Test filtered search with all filter parameters
+7. [ ] Test session management start list end summarize
+8. [ ] Test session analytics get_session_stats
+9. [ ] Test contextual embeddings encode_with_context
+10. [ ] Test conflict detection detect_conflicts
+11. [ ] Test biological decay apply_decay reinforce_memory
+12. [ ] Test consolidation consolidate_memories_advanced
+13. [ ] Test provenance store_memory_with_provenance
+14. [ ] Test multi-hop multi_hop_search
+15. [ ] Test export import export_memories import_memories
+16. [ ] Test code grounding extract_code_references validate_code_reference
+17. [ ] Test hierarchical tiers promote_to_working_memory tier_aware_retrieve
+18. [ ] Test hotness calculation calculate_memory_hotness
+19. [ ] Verify backwards compatibility all existing tests pass
+20. [ ] Verify public API unchanged
+
+| Progress Todo | Phase 4 Documentation Completion | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Update memory.md with decomposition completion entry
+2. [ ] Update progress.md marking all decomposition tasks complete
+3. [ ] Document final file structure and line counts
+4. [ ] Document module responsibilities and interfaces
+
+| Progress Todo | Phase 5 Commit and Push | Date: 24/10/2025 | Time: 12:20 AM | Name: Claude |
+1. [ ] Git add all new modules and modified files
+2. [ ] Git commit with comprehensive architectural refactoring message
+3. [ ] Git push to branch
+4. [ ] Verify push succeeded
