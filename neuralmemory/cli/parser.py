@@ -211,6 +211,48 @@ class MemoryArgumentParser:
             help="Number of memories before/after for context (default: 3)"
         )
 
+        # Temporal search arguments
+        self._parser.add_argument(
+            "--last-days",
+            type=int,
+            metavar="N",
+            help="Search memories from last N days"
+        )
+
+        self._parser.add_argument(
+            "--last-weeks",
+            type=int,
+            metavar="N",
+            help="Search memories from last N weeks"
+        )
+
+        self._parser.add_argument(
+            "--last-hours",
+            type=int,
+            metavar="N",
+            help="Search memories from last N hours"
+        )
+
+        self._parser.add_argument(
+            "--start-date",
+            type=str,
+            metavar="DATE",
+            help="Start date for time range search (e.g. '10/10/2025' or '09:00 AM, 10/10/2025')"
+        )
+
+        self._parser.add_argument(
+            "--end-date",
+            type=str,
+            metavar="DATE",
+            help="End date for time range search (e.g. '24/10/2025' or '11:59 PM, 24/10/2025')"
+        )
+
+        self._parser.add_argument(
+            "--recent",
+            action="store_true",
+            help="Search recent memories (default: last 7 days)"
+        )
+
     def parse_arguments(self) -> Any:
         return self._parser.parse_args()
 

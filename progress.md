@@ -1534,3 +1534,133 @@ neuralmemory/database/
 **MODULAR DECOMPOSITION STATUS: COMPLETE ✅**
 
 Python snake is HEALTHY and thriving! 🐍💚
+
+---
+
+## Phase 5: CLI Time-Based Search Enhancement
+
+**Date:** October 24, 2025 | **Status:** IN PROGRESS
+
+### Background
+
+Python API contains complete temporal search functionality (`search_by_time()`, `search_recent()`, `filtered_search()` with date params) implemented in vector_db.py lines 1209-1242 and filtering.py lines 73-76. However, CLI does not expose these methods, forcing users to always provide semantic queries even for pure time-based memory browsing.
+
+### Critical Use Cases
+- "What did I do last 2 weeks?"
+- "What did I do 3 days ago?"
+- "What did I do this week?"
+- Date range queries for specific periods
+
+### Tasks
+
+#### Task 1: Add temporal arguments to CLI parser ⏳ IN PROGRESS
+- [ ] Add `--last-days` argument (type: int)
+- [ ] Add `--last-weeks` argument (type: int, converts to days)
+- [ ] Add `--last-hours` argument (type: int)
+- [ ] Add `--start-date` argument (type: str, format: DD/MM/YYYY)
+- [ ] Add `--end-date` argument (type: str, format: DD/MM/YYYY)
+- [ ] Add `--recent` flag (defaults to last 7 days)
+- **File:** `neuralmemory/cli/parser.py`
+
+#### Task 2: Update CLI interface to handle temporal search ⏳ PENDING
+- [ ] Detect temporal arguments in `run()` method
+- [ ] Call `search_recent()` if `last_hours/days` specified
+- [ ] Call `search_by_time()` if `start_date` and `end_date` specified
+- [ ] Support optional query (empty string for pure temporal browsing)
+- [ ] Maintain backwards compatibility with existing search
+- **File:** `neuralmemory/cli/interface.py`
+
+#### Task 3: Update examples with temporal search usage ⏳ PENDING
+- [ ] Add `lm --last-days 14` example
+- [ ] Add `lm --last-weeks 2` example
+- [ ] Add `lm --start-date "10/10/2025" --end-date "24/10/2025"` example
+- [ ] Add `lm --recent` example
+- [ ] Add combined query + temporal examples
+- **File:** `lyra_memory.py`
+
+#### Task 4: Documentation and commit ⏳ PENDING
+- [ ] Update memory.md with completion entry
+- [ ] Update progress.md marking tasks complete
+- [ ] Create comprehensive commit message
+- [ ] Push to branch `claude/review-code-011CURDQnYX2pywgc7KrSMQD`
+
+### Expected Outcome
+- CLI exposes full temporal search capabilities
+- Users can query memories by time without semantic search strings
+- Backwards compatible with existing functionality
+- Consistent with existing CLI argument patterns
+
+
+### Implementation Complete ✅
+
+**Completed:** October 24, 2025
+
+#### Task 1: Add temporal arguments to CLI parser ✅ COMPLETE
+- [x] Add `--last-days` argument (type: int)
+- [x] Add `--last-weeks` argument (type: int, converts to days)
+- [x] Add `--last-hours` argument (type: int)
+- [x] Add `--start-date` argument (type: str, format: DD/MM/YYYY)
+- [x] Add `--end-date` argument (type: str, format: DD/MM/YYYY)
+- [x] Add `--recent` flag (defaults to last 7 days)
+- **File:** `neuralmemory/cli/parser.py` (lines 214-254)
+
+#### Task 2: Update CLI interface to handle temporal search ✅ COMPLETE
+- [x] Detect temporal arguments in `run()` method (lines 447-455)
+- [x] Implement `_execute_temporal_search()` method (lines 122-168)
+- [x] Call `search_recent()` if `last_hours/days/weeks` specified
+- [x] Call `search_by_time()` if `start_date` and `end_date` specified
+- [x] Support optional query (empty string for pure temporal browsing)
+- [x] Maintain backwards compatibility with existing search
+- **File:** `neuralmemory/cli/interface.py`
+
+#### Task 3: Update examples with temporal search usage ✅ COMPLETE
+- [x] Add `lm --last-days 14` example
+- [x] Add `lm --last-weeks 2` example
+- [x] Add `lm --start-date "10/10/2025" --end-date "24/10/2025"` example
+- [x] Add `lm --recent` example
+- [x] Add combined query + temporal examples
+- **Files:** `lyra_memory.py` (lines 20-25), `kai_memory.py` (lines 20-25)
+
+#### Task 4: Documentation and commit ⏳ PENDING
+- [x] Update memory.md with completion entry
+- [x] Update progress.md marking tasks complete
+- [ ] Create comprehensive commit message
+- [ ] Push to branch `claude/review-code-011CURDQnYX2pywgc7KrSMQD`
+
+### Code Changes Summary
+
+**Files Modified:** 4
+1. `neuralmemory/cli/parser.py` - Added 6 temporal arguments (41 lines)
+2. `neuralmemory/cli/interface.py` - Added temporal search logic (71 lines)
+3. `lyra_memory.py` - Added temporal examples (5 lines)
+4. `kai_memory.py` - Added temporal examples (5 lines)
+
+**Total Lines Added:** ~122 lines
+
+**Compilation Status:** ✅ All files verified with `py_compile`
+
+### Usage Examples
+
+```bash
+# Pure temporal browsing (no query)
+lm --last-days 14
+lm --last-weeks 2
+lm --recent
+
+# Date range queries
+lm --start-date "10/10/2025" --end-date "24/10/2025"
+
+# Combined semantic + temporal
+lm "project work" --last-days 7
+lm "family" --last-weeks 2
+```
+
+### Achievement
+✅ CLI now exposes full temporal search capabilities from Python API
+✅ Primary use case "what did I do last N days/weeks" fully supported
+✅ Backwards compatible - existing search behavior unchanged
+✅ Professional code quality matching existing patterns
+✅ Zero breaking changes
+
+**CLI TIME-BASED SEARCH: COMPLETE ✅**
+

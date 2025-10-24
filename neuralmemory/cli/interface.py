@@ -113,11 +113,59 @@ class MemoryCLI:
     def _execute_search(self, query: str, n_results: int) -> list[SearchResult]:
         if self._neural_vector is None:
             raise RuntimeError("Neural Vector not initialized")
-        
+
         try:
             return self._neural_vector.retrieve_memory(query=query, n_results=n_results)
         except (VectorDatabaseError, EmbeddingEngineError, RerankerEngineError) as e:
             raise RuntimeError(f"Search execution failed: {e}")
+
+    def _execute_temporal_search(self, args: Any, query: str) -> list[SearchResult]:
+        if self._neural_vector is None:
+            raise RuntimeError("Neural Vector not initialized")
+
+        try:
+            from datetime import datetime
+
+            # Handle --last-days, --last-weeks, --last-hours, --recent
+            if hasattr(args, 'last_hours') and args.last_hours is not None:
+                return self._neural_vector.search_recent(
+                    query=query,
+                    last_hours=args.last_hours,
+                    n_results=args.n_results
+                )
+            elif hasattr(args, 'last_days') and args.last_days is not None:
+                return self._neural_vector.search_recent(
+                    query=query,
+                    last_days=args.last_days,
+                    n_results=args.n_results
+                )
+            elif hasattr(args, 'last_weeks') and args.last_weeks is not None:
+                return self._neural_vector.search_recent(
+                    query=query,
+                    last_days=args.last_weeks * 7,
+                    n_results=args.n_results
+                )
+            elif hasattr(args, 'recent') and args.recent:
+                return self._neural_vector.search_recent(
+                    query=query,
+                    last_days=7,
+                    n_results=args.n_results
+                )
+            elif hasattr(args, 'start_date') and args.start_date and hasattr(args, 'end_date') and args.end_date:
+                # Parse dates using existing parse method from NeuralVector
+                start_dt: datetime = self._neural_vector._parse_timestamp(args.start_date)
+                end_dt: datetime = self._neural_vector._parse_timestamp(args.end_date)
+                return self._neural_vector.search_by_time(
+                    query=query,
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    n_results=args.n_results
+                )
+            else:
+                raise ValueError("Invalid temporal search parameters")
+
+        except (VectorDatabaseError, EmbeddingEngineError, RerankerEngineError) as e:
+            raise RuntimeError(f"Temporal search execution failed: {e}")
     
     def _execute_store(
         self,
@@ -444,12 +492,30 @@ class MemoryCLI:
                     execution_time: float = time.time() - start_time
                     self._display_batch_store_results(results, execution_time)
             else:
-                self._validate_search_arguments(args)
-                results: list[SearchResult] = self._execute_search(
-                    args.query, args.n_results
+                # Check for temporal search arguments
+                has_temporal: bool = (
+                    hasattr(args, 'last_days') and args.last_days is not None or
+                    hasattr(args, 'last_weeks') and args.last_weeks is not None or
+                    hasattr(args, 'last_hours') and args.last_hours is not None or
+                    hasattr(args, 'start_date') and args.start_date is not None or
+                    hasattr(args, 'end_date') and args.end_date is not None or
+                    hasattr(args, 'recent') and args.recent
                 )
-                execution_time: float = time.time() - start_time
-                self._display_results(args.query, results, args.db_path, execution_time)
+
+                if has_temporal:
+                    # Temporal search mode
+                    query: str = args.query if args.query else ""
+                    results: list[SearchResult] = self._execute_temporal_search(args, query)
+                    execution_time: float = time.time() - start_time
+                    self._display_results(query, results, args.db_path, execution_time)
+                else:
+                    # Regular semantic search
+                    self._validate_search_arguments(args)
+                    results: list[SearchResult] = self._execute_search(
+                        args.query, args.n_results
+                    )
+                    execution_time: float = time.time() - start_time
+                    self._display_results(args.query, results, args.db_path, execution_time)
             
         except (ValueError, FileNotFoundError, RuntimeError) as e:
             self._logger.error(f"CLI error: {e}")
