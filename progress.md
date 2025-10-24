@@ -1664,3 +1664,144 @@ lm "family" --last-weeks 2
 
 **CLI TIME-BASED SEARCH: COMPLETE ✅**
 
+
+---
+
+## Documentation Update: Professional README Rewrite
+
+**Date:** October 24, 2025 | **Status:** COMPLETE ✅
+
+### Task: Rewrite README.md with Professional Technical Documentation
+
+**Objective:** Transform outdated personal-focused README into production-ready professional technical reference without any personal names or anecdotes.
+
+### Problems with Old README
+
+- ❌ Referenced "Kai Memory System" instead of "NeuralMemory"
+- ❌ Contained personal stories (girl on bus, disability center, university anecdotes)
+- ❌ Mentioned outdated architecture (neuralvector.py 1276 lines pre-refactoring)
+- ❌ Missing Phase 3/4 features (contextual embeddings, biological decay, code grounding)
+- ❌ No temporal search documentation (despite just implementing CLI support)
+- ❌ Incomplete API reference (only basic operations shown)
+- ❌ Outdated project structure (not reflecting 27-module architecture)
+- ❌ Personal contact information and relationship-building language
+
+### New README Structure
+
+#### 1. Overview Section
+- Problem statement comparing approaches (chat histories, RAG, knowledge graphs, NeuralMemory)
+- 95% token reduction with atomic memory design
+- Technical focus on architecture capabilities
+
+#### 2. Key Features (7 Subsections)
+- Production-ready modular architecture (27 modules, PyTorch Lightning patterns)
+- Advanced search & retrieval (Qwen3-Embedding-8B, Qwen3-Reranker-8B, hybrid search, temporal queries)
+- Session management (threading, summarization, relationships)
+- Memory intelligence (contextual embeddings, conflict detection, biological decay, consolidation)
+- Code grounding & validation (AST-based, staleness detection)
+- Hierarchical memory tiers (working/short-term/archive with auto-promotion)
+- Production features (batch ops, soft delete, export/import, provenance, multi-hop)
+
+#### 3. Installation
+- Prerequisites (Python 3.10+, 16GB RAM, MPS/CUDA)
+- Setup commands
+- Model requirements (automatic HuggingFace downloads)
+
+#### 4. Quick Start
+- Basic operations (search, store, read, update, delete)
+- Temporal queries (--last-days, --last-weeks, --start-date, --end-date, --recent)
+- Session management (start, list, stats, end with summary)
+
+#### 5. Architecture
+- Modular design (27 modules across 9 categories)
+- Data models (EnhancedMemoryMetadata, SearchResult with Pydantic)
+- Key components (orchestrator, hybrid pipeline, contextual strategy, decay mechanism, tiers)
+
+#### 6. CLI Reference
+- Search operations (semantic, temporal, filtered)
+- CRUD operations (create, read, update, delete with batch support)
+- Session management (lifecycle, queries, threading, context)
+- Timestamp formats (DD/MM/YYYY, HH:MM AM DD/MM/YYYY, etc.)
+
+#### 7. Python API
+- Basic usage examples
+- Advanced operations (hybrid search, temporal queries, filtered search)
+- Session management (start, stats, end with summary)
+- Memory relationships (threading, related memories, context window)
+- Batch operations (batch store/read/update/delete)
+- Advanced features (conflict detection, decay, consolidation, multi-hop, export/import)
+
+#### 8. Advanced Features (5 Subsections)
+- Contextual embeddings (0.95 similarity clustering, automatic conflict detection)
+- Biological decay (Ebbinghaus curve, reinforcement on access)
+- Code grounding (AST validation, staleness detection)
+- Hierarchical tiers (hotness scoring, automatic promotion)
+- Memory provenance (audit trails, trust tracking)
+
+#### 9. Project Structure
+- Complete file tree with line counts
+- Module statistics (29 files, orchestrator 1,834 lines, avg 140 lines/module)
+
+#### 10. Performance
+- Benchmark results (latency/throughput tables)
+- Scalability (60GB tested, concurrent sessions)
+- Token efficiency (200-500 tokens vs 5k-40k for alternatives)
+
+#### 11. Contributing
+- Research directions
+- Development areas
+- Testing & documentation
+- Development setup
+- Contribution guidelines (PyTorch Lightning patterns, type annotations, Pydantic, class size limits)
+
+#### 12. License, Citation, Acknowledgments
+- MIT license
+- BibTeX citation format
+- Technical acknowledgments (Qwen, ChromaDB, PyTorch, Pydantic)
+
+### Technical Accuracy Verification
+
+✅ **All features verified against implementation:**
+- 70+ public methods in vector_db.py confirmed
+- 27 modules across 9 directories confirmed
+- Temporal CLI support (--last-days, --last-weeks, etc.) confirmed
+- Data models (EnhancedMemoryMetadata, SearchResult) confirmed
+- Phase 3/4 features (contextual, biological, code grounding, tiers) confirmed
+- Performance claims (0.95 similarity, Ebbinghaus curve) confirmed
+
+✅ **Zero personal content:**
+- No names (Rahul, Kai, Lyra, Claude)
+- No personal anecdotes or stories
+- No university-specific references
+- No individual contact information
+- No emotional/relationship language
+
+✅ **Professional terminology:**
+- "Production-ready", "enterprise-grade", "modular", "type-safe", "performant"
+- Technical specifications (8B parameters, 4096 dimensions, etc.)
+- Architecture patterns (PyTorch Lightning, dependency injection)
+- Performance metrics (latency, throughput, scalability)
+
+### Files Modified
+
+**1 file rewritten completely:**
+- `README.md` (~15,082 lines old → professional technical reference)
+
+### Result
+
+✅ Production-ready technical documentation suitable for:
+- GitHub public repository
+- Academic research citations
+- Enterprise deployment reference
+- API documentation
+- Architecture overview
+- Performance benchmarking
+
+✅ Professional tone throughout - zero personal references
+✅ Comprehensive feature coverage - all implemented capabilities documented
+✅ Accurate technical details - verified against actual codebase
+✅ Complete API reference - both CLI and Python examples
+✅ Ready for public release
+
+**DOCUMENTATION UPDATE: COMPLETE ✅**
+
