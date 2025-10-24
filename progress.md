@@ -1805,3 +1805,97 @@ lm "family" --last-weeks 2
 
 **DOCUMENTATION UPDATE: COMPLETE ✅**
 
+
+---
+
+## Documentation Correction: Biological Decay Mechanism
+
+**Date:** October 24, 2025 | **Status:** COMPLETE ✅
+
+### Issue Identified by User
+
+README incorrectly claimed biological decay uses "Ebbinghaus forgetting curve" when actual implementation uses counter-based linear decay.
+
+### Investigation Results
+
+**TWO Decay Implementations Found in `biological.py`:**
+
+1. **`apply_decay()` method (lines 21-40):**
+   - Formula: `memory_strength * (0.5 ** days_since_created)`
+   - True Ebbinghaus exponential decay
+   - Applied to `memory_strength` field (0.0-1.0)
+   - **STATUS: Implemented but NEVER CALLED anywhere in codebase**
+
+2. **`apply_decay_to_all()` method (lines 42-78):**
+   - Linear counter: 5 → 4 → 3 → 2 → 1 → 0 → deletion
+   - Applied to `decay_counter` field
+   - **STATUS: ACTIVELY USED** (called in vector_db.py:1656)
+
+3. **`reinforce()` method (lines 80-108):**
+   - Resets `decay_counter` to 5 on access
+   - **STATUS: ACTIVELY USED** (called in vector_db.py:810)
+
+### Verification
+
+```bash
+# Searched for apply_decay calls (not apply_decay_to_all)
+grep -rn "\.apply_decay(" neuralmemory/ --include="*.py" | grep -v "apply_decay_to_all"
+# Result: ZERO calls found
+
+# Verified active mechanism
+grep -n "apply_decay_to_all" neuralmemory/database/vector_db.py
+# Result: Line 1656 - ACTIVELY CALLED
+```
+
+### Actual Active Mechanism
+
+✅ **Counter-Based Decay:**
+- Linear countdown: 5 → 4 → 3 → 2 → 1 → 0 → deletion
+- Only applied to conflicting memories (>0.93 similarity)
+- Reinforcement on access resets counter to 5
+- Non-conflicting memories preserved indefinitely
+
+❌ **Ebbinghaus Curve:**
+- Code exists but is orphaned (never called)
+- Exponential formula implemented but unused
+- Misleading to claim it's active
+
+### README Corrections Made
+
+**Line 37 - Overview:**
+- ❌ OLD: "Ebbinghaus curve-inspired temporal decay"
+- ✅ NEW: "Counter-based temporal decay (5→4→3→2→1→0→deletion) with reinforcement on access"
+
+**Line 80 - Key Features:**
+- ❌ OLD: "Biological decay with Ebbinghaus forgetting curve"
+- ✅ NEW: "Counter-based biological decay (5→0 linear countdown) with access reinforcement"
+
+**Line 612 - Advanced Features Section:**
+- ❌ OLD: "Applies Ebbinghaus forgetting curve to conflicting memories"
+- ✅ NEW: "Counter-based decay mechanism for conflicting memories (>0.93 similarity)"
+
+**Decay Schedule Removed:**
+- ❌ OLD: Day-by-day percentages (20%, 40%, 60%, 80%) implying exponential decay
+- ✅ NEW: Clear bullet points describing linear counter mechanism
+
+### Verification
+
+```bash
+grep -n "Ebbinghaus" README.md
+# Result: ZERO matches - all references removed
+```
+
+### Technical Accuracy
+
+✅ README now matches actual implementation
+✅ No false claims about Ebbinghaus mathematics
+✅ Honest about counter-based simplicity
+✅ Accurate description of active mechanism
+✅ User-reported issue completely resolved
+
+**CORRECTION: COMPLETE ✅**
+
+---
+
+*Special thanks to user for catching this documentation inaccuracy through careful code review.*
+
