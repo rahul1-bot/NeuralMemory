@@ -79,6 +79,7 @@ class NeuralVector:
         enable_session_tracking: bool = True,
         enable_contextual_embeddings: bool = True,
         enable_biological_decay: bool = True,
+        decay_deletion_threshold: float = 0.1,
         conflict_similarity_threshold: float = 0.93,
         enable_hybrid_retrieval: bool = True,
         enable_code_grounding: bool = True,
@@ -102,6 +103,7 @@ class NeuralVector:
         # Feature flags
         self._enable_contextual_embeddings: bool = enable_contextual_embeddings
         self._enable_biological_decay: bool = enable_biological_decay
+        self._decay_deletion_threshold: float = decay_deletion_threshold
         self._conflict_similarity_threshold: float = conflict_similarity_threshold
         self._enable_hybrid_retrieval: bool = enable_hybrid_retrieval
         self._enable_code_grounding: bool = enable_code_grounding
@@ -197,7 +199,9 @@ class NeuralVector:
         )
         self._biological_strategy = BiologicalDecayStrategy(
             collection=self._collection,
-            logger=self._logger
+            enable_biological_decay=self._enable_biological_decay,
+            logger=self._logger,
+            deletion_threshold=self._decay_deletion_threshold
         )
         self._consolidation_strategy = ConsolidationStrategy(
             collection=self._collection,

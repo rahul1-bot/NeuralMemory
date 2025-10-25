@@ -12,18 +12,20 @@ class BiologicalDecayStrategy:
         self,
         collection: Any,
         enable_biological_decay: bool,
-        logger: logging.Logger
+        logger: logging.Logger,
+        deletion_threshold: float = 0.1
     ) -> None:
         self._collection: Any = collection
         self._enabled: bool = enable_biological_decay
         self._logger: logging.Logger = logger
+        self._deletion_threshold: float = deletion_threshold
 
     def apply_decay(
         self,
         memory_id: str,
         metadata: EnhancedMemoryMetadata
     ) -> EnhancedMemoryMetadata:
-        if not self._enabled or metadata.decay_counter is None:
+        if not self._enabled:
             return metadata
 
         days_since_created: int = (datetime.now() - metadata.timestamp).days
@@ -44,7 +46,7 @@ class BiologicalDecayStrategy:
             return 0
 
         try:
-            all_results: dict[str, Any] = self._collection.get()
+            all_results: dict[str, Any] = self._collection.get(include=["metadatas"])
 
             if not all_results or not all_results['ids']:
                 return 0
@@ -54,23 +56,36 @@ class BiologicalDecayStrategy:
             for idx, memory_id in enumerate(all_results['ids']):
                 metadata_dict: dict[str, Any] = all_results['metadatas'][idx] if all_results['metadatas'] else {}
 
-                if 'decay_counter' in metadata_dict and metadata_dict['decay_counter'] is not None:
-                    decay_counter: int = int(metadata_dict['decay_counter'])
+                timestamp_str: str | None = metadata_dict.get('timestamp')
+                if not timestamp_str:
+                    continue
 
-                    new_counter: int = decay_counter - 1
+                try:
+                    timestamp: datetime = datetime.fromisoformat(timestamp_str)
+                except (ValueError, TypeError):
+                    continue
 
-                    if new_counter <= 0:
-                        self._collection.delete(ids=[memory_id])
-                        deleted_count += 1
-                        self._logger.info(f"Deleted expired memory: {memory_id[:8]}... (decay counter reached 0)")
-                    else:
-                        metadata_dict['decay_counter'] = new_counter
-                        self._collection.update(
-                            ids=[memory_id],
-                            metadatas=[metadata_dict]
-                        )
+                days_since_created: int = (datetime.now() - timestamp).days
 
-            self._logger.info(f"Applied decay: deleted {deleted_count} memories")
+                memory_strength: float = float(metadata_dict.get('memory_strength', 1.0))
+
+                decayed_strength: float = memory_strength * (0.5 ** days_since_created)
+
+                if decayed_strength < self._deletion_threshold:
+                    self._collection.delete(ids=[memory_id])
+                    deleted_count += 1
+                    self._logger.info(
+                        f"Deleted decayed memory: {memory_id[:8]}... "
+                        f"(strength: {decayed_strength:.4f} < threshold: {self._deletion_threshold})"
+                    )
+                else:
+                    metadata_dict['memory_strength'] = max(0.0, min(1.0, decayed_strength))
+                    self._collection.update(
+                        ids=[memory_id],
+                        metadatas=[metadata_dict]
+                    )
+
+            self._logger.info(f"Applied Ebbinghaus decay: updated all memories, deleted {deleted_count} weak memories")
             return deleted_count
 
         except Exception as e:
@@ -89,17 +104,16 @@ class BiologicalDecayStrategy:
 
             metadata_dict: dict[str, Any] = result['metadatas'][0]
 
-            if 'decay_counter' in metadata_dict and metadata_dict['decay_counter'] is not None:
-                metadata_dict['decay_counter'] = 5
-                metadata_dict['last_accessed'] = datetime.now().isoformat()
-                metadata_dict['access_count'] = metadata_dict.get('access_count', 0) + 1
+            metadata_dict['memory_strength'] = 1.0
+            metadata_dict['last_accessed'] = datetime.now().isoformat()
+            metadata_dict['access_count'] = metadata_dict.get('access_count', 0) + 1
 
-                self._collection.update(
-                    ids=[memory_id],
-                    metadatas=[metadata_dict]
-                )
+            self._collection.update(
+                ids=[memory_id],
+                metadatas=[metadata_dict]
+            )
 
-                self._logger.debug(f"Reinforced memory: {memory_id[:8]}... (reset decay counter)")
+            self._logger.debug(f"Reinforced memory: {memory_id[:8]}... (reset strength to 1.0)")
 
             return True
 
